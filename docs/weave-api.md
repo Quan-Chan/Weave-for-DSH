@@ -55,7 +55,7 @@ await weave.exportPng()
 | `addNode(spec)` | `spec: { label?, desc?, color?, x?, y?, w?, h? }` | 新节点对象 `{id,label,desc,color,x,y,mirrored,w,h}` | 加一个节点，自动选中、保存、重渲染。颜色可为预设 id（`blue`/`cyan`/`green`/`yellow`/`orange`，旧名 `amber`/`rose`/`teal`/`violet` 亦可）或 `#rrggbb`；未知 id 会回退为蓝色 |
 | `getData()` | — | `{nodes, connections, viewport}` | 当前画布的完整序列化状态（环境：Weave 导出 JSON 同款格式） |
 | `setData(data)` | `data: {nodes, connections?, viewport?}` | 加载后的新状态（同 `getData` 格式） | 用一份 JSON 整体替换画布，自动校验、重建层次、重置撤销历史并渲染 |
-| `exportPng()` | — | `Promise<{ok, value:{dataUrl, name}}>` | 复用 Weave 自己的导出管线，返回当前画布渲染出的 PNG data URL（不触发下载） |
+| `exportPng()` | — | `Promise<{dataUrl, name}>` | 复用 Weave 自己的导出管线，返回当前画布渲染出的 PNG data URL（不触发下载） |
 | `count()` | — | `{nodes, connections}` | 节点与连线数量 |
 
 **示例**
@@ -391,8 +391,8 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 **④ 导出画布为 PNG 数据**
 
 ```js
-const r = await weave.exportPng(); // {ok, value:{dataUrl, name}}
-r.ok ? r.value.dataUrl : r.error
+const r = await weave.exportPng(); // {dataUrl, name}
+r.dataUrl
 ```
 
 **⑤ 居中视口并放大**

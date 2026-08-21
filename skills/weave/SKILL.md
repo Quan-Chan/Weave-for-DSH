@@ -18,7 +18,7 @@ description: 当你需要通过 `weave` 工具操作嵌入的 Weave 节点图编
 | `weave.addNode(spec)` | 添加一个节点（字段 `label`/`desc`/`color`/`x`/`y`/`w`/`h`）；`x`/`y` 为像素值。自动选中、保存、重渲染，返回节点。预设颜色 id 仅 `blue`/`cyan`/`green`/`yellow`/`orange`（及旧名 `amber` 等），未知 id 会回退为蓝色 |
 | `weave.getData()` | 读取整张画布 `{nodes, connections, viewport}` |
 | `weave.setData(data)` | 用 `{nodes, connections?, viewport?}` 整体替换画布，校验、重建、重渲染，返回新状态 |
-| `weave.exportPng()` | 导出当前画布为 PNG，返回 `{ok, value:{dataUrl, name}}` |
+| `weave.exportPng()` | 导出当前画布为 PNG，返回 `{dataUrl, name}` |
 | `weave.count()` | 返回 `{nodes, connections}` 数量 |
 | `App.addNode()` | 在视口中心或上次锚点处加一个节点 |
 | `App._addNodeAt(x, y, asPosition?)` | 在世界坐标处加节点（`asPosition=true` 时坐标作为左上角） |
@@ -76,6 +76,42 @@ description: 当你需要通过 `weave` 工具操作嵌入的 Weave 节点图编
 - 布局：相邻节点横向相距约 15 格、纵向约 10 格；所有坐标保持在 ±50 格以内。`weave.addNode()` 省略 `w`/`h` 即为默认 170×80 节点。
 - `App.selectedNodeIds` / `App.selectedConnIds` 是 `Set`，不是数组。
 - `weave` 只在内嵌编辑器文档内执行，不能操作 harness 外壳、文件系统或宿主进程。
+
+## 示例
+
+三个基础脚本，均可直接作为 `code` 参数执行。
+
+添加两个节点并连线（间距 300px = 15 格）：
+
+```js
+(() => {
+  const a = weave.addNode({ label: '开始', color: 'blue', x: 0, y: 0 });
+  const b = weave.addNode({ label: '结束', color: 'green', x: 300, y: 0 });
+  const conn = App._createConnection(a.id, b.id);
+  App.canvasState.connections.push(conn);
+  App.saveCanvasSnapshot();
+  App.renderCanvas();
+  return { a: a.id, b: b.id, conn: conn.id };
+})()
+```
+
+读取画布内容：
+
+```js
+(() => {
+  const d = weave.getData();
+  return { nodes: d.nodes.length, connections: d.connections.length, labels: d.nodes.map(n => n.label) };
+})()
+```
+
+导出 PNG：
+
+```js
+(async () => {
+  const r = await weave.exportPng();
+  return { name: r.name, size: r.dataUrl.length };
+})()
+```
 
 ## 调用失败时
 

@@ -51,7 +51,7 @@ dsh plugin --profile web add github:Quan-Chan/Weave-for-DSH
 weave.addNode({ label: "需求分析", color: "blue", x: 0, y: 0 })   // 加节点
 weave.getData()                                                    // 读整张图
 weave.setData({ nodes: [...], connections: [...] })                // 整体替换
-await weave.exportPng()                                            // 导出 PNG data URL
+await weave.exportPng()                                            // 导出 PNG，返回 {dataUrl, name}
 weave.count()                                                      // 数量
 ```
 
