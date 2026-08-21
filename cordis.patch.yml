@@ -1,0 +1,6 @@
+# weave-for-dsh 组合包层：挂载 Weave 编辑器插件行。
+# 由 `dsh plugin --profile <name> add weave-for-dsh` 自动应用；
+# 用户可在 profile 自己的 cordis.patch.yml 中按 id: weave 覆盖本行。
+- insert:
+    - id: weave
+      name: weave-for-dsh
