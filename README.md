@@ -15,7 +15,7 @@
 - **页面内嵌** — 编辑器作为会话的第三个页面视图（chat / trajectory / **Weave**）嵌入 DeepSeek Harness，用户可直接拖拽节点、连线、编辑
 - **离屏常驻** — 编辑器 iframe 始终存活，AI 在任意页面视图下操作的都是同一份画布
 - **`weave` AI 工具** — AI 可直接操控画布，见下文
-- **AI 教学 skill 与文档** — 内置 [skills/weave/SKILL.md](skills/weave/SKILL.md) 与 [docs/weave-api.md](docs/weave-api.md)
+- **AI 教学 skill 与文档** — 内置 [skills/weave/SKILL.md](skills/weave/SKILL.md) 与 [docs/weave-api.md](docs/weave-api.md)；skill 由插件自动注册进 agent 技能目录，装好即可用，无需手动复制
 
 安装（声明了 `dsh.bundle` 的组合包，一条命令装进 Web profile）：
 
