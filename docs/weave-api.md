@@ -423,7 +423,7 @@ if (id) App.openNodeModal(id); // 用户可看到模态框并编辑
 1. **执行环境**：代码在嵌入的 Weave iframe 内执行，只能访问该编辑器页面的全局（`App` / `Weave` / `weave` / `document` / `localStorage`）。不能访问 harness 外壳，不能 import/require 外部模块，也不具备 Node / shell 权限（那些是其他工具如 `write` / `pwsh` 的职责）。
 2. **入口是单个表达式**：需要多步时用 IIFE 包裹 —— `(() => { ...; return ... })()`，或 `(async () => {...})()` + `await`。
 3. **改完记得渲染**：直接改 `App.canvasState.nodes/connections` 后，调用 `App.saveCanvasSnapshot()`（产生撤销历史并持久化）+ `App.renderCanvas()`（刷新画面）。若只想持久化不想要历史步骤，用 `App.saveCanvas()`。
-4. **数据格式**：`weave.getData()` / `setData()` / `_serializeData()` 使用同一个文档格式（节点带 `id/label/desc/color/x/y/mirrored/w/h`，连线带 `id/from/to/label/cp1/cp2/mirrored`，外加 `viewport`）。该序列化格式里的 `x/y` 是网格单位（1 单位 = 20px），加载时自动换算回像素；而 `weave.addNode` / `App._addNodeAt` / 直接读写 `App.canvasState.nodes` 时 `x/y` 都是像素。
+4. **数据格式**：`weave.getData()` / `setData()` / `_serializeData()` 使用同一个文档格式（节点带 `id/label/desc/color/x/y/mirrored/w/h`，连线带 `id/from/to/label/cp1/cp2/mirrored`，外加 `viewport`）。该序列化格式里的 `x/y` 是网格单位（1 单位 = 20px），加载时自动换算回像素；而 `weave.addNode` / `App._addNodeAt` / 直接读写 `App.canvasState.nodes` 时 `x/y` 都是像素。默认节点 170×80px ≈ 8.5×4 格。一张正常的图，相邻节点中心距横向约 15 格、纵向约 10 格（边缘间留约 6 个空格 ≈ 120~130px），整张图范围是几十格；坐标动辄 ±100 格以上通常是把格误当成了像素。
 5. **断开/切换视图无影响**：编辑器为离屏常驻实例，用户切到聊天页等任意页面时，`weave` 工具仍可操作同一份画布；改完切回 Weave 页即可看到。
 6. **清空**：`weave.setData({nodes:[],connections:[]})` 会清空全部内容并把撤销历史重置为新基线，是彻底清空的可信路径。`App.clearAllNodes()` 另带原生 `confirm()` 确认弹窗，离屏执行时可能被自动取消而无效，故优先用 `weave.setData()`。
 
