@@ -72,8 +72,8 @@ description: 当你需要通过 `weave` 工具操作嵌入的 Weave 节点图编
 
 - 直接修改 `App.canvasState.nodes` 或 `App.canvasState.connections` 后，按顺序调用 `App.saveCanvasSnapshot()` 和 `App.renderCanvas()`。
 - 节点格式 `{id, label, desc, color, x, y, mirrored, w, h}`；连线格式 `{id, from, to, label?, cp1?, cp2?, mirrored}`。
-- 单位不同:`getData()` / `setData()` 的 `x`/`y` 是**网格单位**（1 格 = 20px）；节点 `w`/`h`、以及 `weave.addNode` / `App._addNodeAt` / 直接读写 `App.canvasState.nodes` 时的 `x`/`y` 都是**像素**。默认节点 170×80px ≈ 8.5×4 格。
-- 布局尺度：一张正常的图，相邻节点中心距横向约 **15 格**、纵向约 **10 格**，即节点边缘之间留约 **6 个空格**（120~130px）；整张图的范围是几十格。写出的坐标动辄 ±100 格以上，通常是把格误当成了像素。
+- 坐标有两套单位：`getData()` / `setData()` 的 `x`/`y` 是网格单位；`weave.addNode()` 的 `x`/`y` 与节点 `w`/`h` 是像素。要把 `getData()` 读到的坐标用于 `weave.addNode()`，先乘 20。
+- 布局：相邻节点横向相距约 15 格、纵向约 10 格；所有坐标保持在 ±50 格以内。`weave.addNode()` 省略 `w`/`h` 即为默认 170×80 节点。
 - `App.selectedNodeIds` / `App.selectedConnIds` 是 `Set`，不是数组。
 - `weave` 只在内嵌编辑器文档内执行，不能操作 harness 外壳、文件系统或宿主进程。
 
