@@ -1,5 +1,5 @@
 /**
- * @deepseek-ai/dsh-weave — Host half type declarations.
+ * weave-for-dsh — Host half type declarations.
  *
  * Functions-plugin entrypoint (named exports), following the loader contract:
  * `name`, `inject`, and `apply`. The `Config` is omitted because this plugin

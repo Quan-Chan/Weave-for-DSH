@@ -1,5 +1,5 @@
 /**
- * @deepseek-ai/dsh-weave — Client half type declarations (browser bundle).
+ * weave-for-dsh — Client half type declarations (browser bundle).
  *
  * The `/client` entrypoint is the package's public browser API and exports
  * only what the Cordis loader needs: the `inject` service list and `apply`.

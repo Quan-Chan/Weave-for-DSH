@@ -1,5 +1,5 @@
 /**
- * @deepseek-ai/dsh-weave — invariant companion type declarations.
+ * weave-for-dsh — invariant companion type declarations.
  */
 export declare const name: string
 export declare const inject: string[]
