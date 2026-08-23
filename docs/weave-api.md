@@ -87,6 +87,7 @@ weave.setData({
 | 函数 | 签名 | 用途 |
 |---|---|---|
 | `escapeHtml` | `escapeHtml(str) -> string` | HTML 转义 |
+| `xmlEscapeText` | `xmlEscapeText(str) -> string` | XML 转义（导出 SVG 内嵌样式用） |
 | `debounce` | `debounce(fn, ms) -> fn` | 防抖包装 |
 | `clamp` | `clamp(v, min, max) -> number` | 数值夹取 |
 | `svgEl` | `svgEl(tag) -> Element` | 创建 SVG 元素 |

@@ -1,7 +1,7 @@
 {
   "name": "weave-for-dsh",
   "description": "Weave node-graph editor as a fixed DeepSeek Harness plugin: embeds the single-file editor as a page view, registers the `weave` AI tool that directly controls the page JS, and ships an AI-teaching skill.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "./lib/index.js",
   "license": "Apache-2.0",

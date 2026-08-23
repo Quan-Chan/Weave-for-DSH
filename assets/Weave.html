@@ -27,6 +27,49 @@ html,body{height:100vh;overflow:hidden;font-family:'Inter',-apple-system,BlinkMa
 .header{background:var(--bg-card);border-bottom:1px solid var(--border);padding:0 24px;height:56px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;z-index:100;box-shadow:var(--shadow-sm)}
 .header-brand{display:flex;align-items:center;gap:0;font-size:15px;font-weight:600;color:var(--text-primary);line-height:1}
 .header-brand svg{width:28px;height:28px;color:var(--accent);display:block;flex-shrink:0;transform:translateY(-1px)}
+/*Σ 彩蛋（App.startEasterEgg）：Σ 左→右推进，左侧 ■▶ 形蒙版（矩形+右三角）
+   随 Σ 移动，填充 Σ 左侧的横向凹槽及更左侧位置；字母被完全盖在 Σ 左侧
+   （即完全被蒙版覆盖）时消失。层叠：文字(1) < 蒙版(2) < Σ(3)。*/
+.header-brand{cursor:pointer;user-select:none;position:relative}
+.brand-text{display:inline-block;white-space:nowrap;position:relative;z-index:1}
+.brand-letter{display:inline-block;transition:opacity .1s,transform .1s}
+.brand-letter.eaten{opacity:0;transform:scale(.5)}
+/*■▶ 形蒙版：左段矩形填 Σ 更左侧（顶栏左 padding 留白），右段右向三角形
+  填进 Σ 左侧的 V 形凹槽（顶点约在 Σ 中部 x=14px 处）。白色与背景同色，
+  位于文字之上：蒙版盖住的字母立即被"擦除"，随后由 JS 移除。*/
+.wedge-mask{position:absolute;left:-24px;top:-8px;width:38px;height:42px;
+  background:var(--bg-card);clip-path:polygon(0 0,86% 0,100% 50%,86% 100%,0 100%);
+  z-index:2;pointer-events:none}
+.brand-sigma{position:relative;z-index:3}
+.header-brand.egg-active .brand-sigma{animation:egg-sigma-eat .68s cubic-bezier(.4,0,.2,1) forwards}
+.header-brand.egg-active .wedge-mask{animation:egg-wedge-eat .68s cubic-bezier(.4,0,.2,1) forwards}
+.header-brand.egg-spit .brand-sigma{animation:egg-sigma-back .25s ease-out forwards}
+.header-brand.egg-spit .wedge-mask{animation:egg-wedge-back .25s ease-out forwards}
+.header-brand.egg-spit .brand-text{animation:egg-text-in .4s ease-out .25s both}
+@keyframes egg-sigma-eat{
+  0%  {transform:translateX(0)    scale(1)}
+  15% {transform:translateX(12px) scale(1.1,.88)}
+  30% {transform:translateX(27px) scale(1.1,.88)}
+  45% {transform:translateX(44px) scale(1.1,.88)}
+  60% {transform:translateX(60px) scale(1.1,.88)}
+  75% {transform:translateX(74px) scale(1.1,.88)}
+  100%{transform:translateX(80px) scale(1)}
+}
+@keyframes egg-wedge-eat{
+  0%  {transform:translateX(0)}
+  15% {transform:translateX(12px)}
+  30% {transform:translateX(27px)}
+  45% {transform:translateX(44px)}
+  60% {transform:translateX(60px)}
+  75% {transform:translateX(74px)}
+  100%{transform:translateX(80px)}
+}
+@keyframes egg-sigma-back{0%{transform:translateX(80px) scale(1)}100%{transform:translateX(0) scale(1)}}
+@keyframes egg-wedge-back{0%{transform:translateX(80px)}100%{transform:translateX(0)}}
+@keyframes egg-text-in{0%{opacity:0}100%{opacity:1}}
+/*吐出的节点落地轻弹*/
+.node.egg-land{animation:egg-node-land .3s cubic-bezier(.34,1.56,.64,1) forwards}
+@keyframes egg-node-land{0%{transform:translate(var(--egg-cx),var(--egg-cy)) scale(1.12);opacity:0}70%{transform:translate(var(--egg-cx),var(--egg-cy)) scale(.98);opacity:1}100%{transform:translate(var(--egg-cx),var(--egg-cy)) scale(1);opacity:1}}
 .header-badge{font-size:11px;padding:4px 10px;background:var(--accent-bg);color:var(--accent);border-radius:20px;font-weight:500}
 .btn{padding:8px 14px;border-radius:var(--radius-sm);font-size:12px;font-weight:500;cursor:pointer;border:none;transition:all .2s;display:inline-flex;align-items:center;justify-content:center;gap:5px;font-family:inherit;user-select:none}
 .btn:active{transform:scale(.97)}
@@ -59,7 +102,8 @@ html,body{height:100vh;overflow:hidden;font-family:'Inter',-apple-system,BlinkMa
     .canvas-world   — transform: translate(panX, panY)，仅平移（GPU 合成平移）
       svg#linesSvg   — 不加任何 transform（否则会被缓存为纹理 → 模糊）
         g.conn-group → g.lines / g.labels
-          path.line — d 属性保存（预先缩放的）屏幕坐标（缩放时重新渲染）
+          path.line — d 属性保存（预先缩放的）屏幕坐标（缩放时重新渲染）；
+                       stroke-width 以属性写入 = 系数 × scale（2.5/3.5/4，见 _renderConnection）
           text.line-label — x/y/font-size 均已预缩放（缩放时重新渲染）
       .canvas-nodes — transform: scale(scale) → 缩放变化时重渲染以保证文字清晰
         .node       — transform: translate(nodeX, nodeY) 世界坐标*/
@@ -77,10 +121,16 @@ html,body{height:100vh;overflow:hidden;font-family:'Inter',-apple-system,BlinkMa
 text-rendering: geometricPrecision 对标签文字做同样处理。*/
 .lines-svg path{shape-rendering:geometricPrecision}
 .line-label{text-rendering:geometricPrecision}
-.line{fill:none;stroke-width:calc(2.5 * var(--line-scale, 1));stroke-linecap:round;pointer-events:stroke;cursor:pointer;opacity:.6;transition:opacity .15s,stroke-width .15s}
-.line:hover{opacity:1;stroke-width:calc(3.5 * var(--line-scale, 1))}
-.line.hover{opacity:1;stroke-width:calc(3.5 * var(--line-scale, 1))}
-.line.selected{opacity:1;stroke-width:calc(4 * var(--line-scale, 1));filter:drop-shadow(0 0 4px rgba(59,130,246,.55))}
+/*连线描边宽度（base 2.5 × scale / hover 3.5 × scale / selected 4 × scale）
+由 JS 以 stroke-width 属性写入（见 _renderConnection / _bindConnEl），
+不用 CSS calc()/var() 计算——Firefox 对该写法于 SVG 描边宽度上的解析
+并不可靠（不应用该声明时会回退到 .lines 组继承的命中路径宽度
+Math.max(15×scale, 8)，导致连线异常粗）。同样刻意不含
+stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细抖动。*/
+.line{fill:none;stroke-linecap:round;pointer-events:stroke;cursor:pointer;opacity:.6;transition:opacity .15s}
+.line:hover{opacity:1}
+.line.hover{opacity:1}
+.line.selected{opacity:1;filter:drop-shadow(0 0 4px rgba(59,130,246,.55))}
 .line.temp{stroke-dasharray:6 4;opacity:.8}
 .line.s-blue{stroke:#3b82f6}.line.s-cyan{stroke:#06b6d4}
 .line.s-green{stroke:#10b981}.line.s-yellow{stroke:#eab308}
@@ -240,8 +290,11 @@ text-rendering: geometricPrecision 对标签文字做同样处理。*/
 .m-cp-preview{flex-shrink:0}
 
 /*── 关于弹窗 ──*/
-.about-content{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
-.about-icon{width:48px;height:48px;margin:0 auto 6px;border-radius:12px;background:var(--bg-input);border:1px solid var(--border);display:flex;align-items:center;justify-content:center}
+/*软件详情：整体位置与行距微调（Σ 图标仍位于内容顶部中上方）。*/
+.about-content{display:flex;flex-direction:column;gap:16px;margin-bottom:16px;padding-top:20px}
+.about-icon{width:48px;height:48px;margin:0 auto 6px;border-radius:12px;background:var(--bg-input);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer}
+.about-icon:hover{background:var(--bg-hover)}
+.about-icon:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .about-icon svg{width:24px;height:24px;color:var(--accent)}
 .about-row{display:flex;align-items:center;font-size:12px;line-height:1.6}
 .about-row label{width:80px;flex-shrink:0;color:var(--text-muted);font-weight:500}
@@ -332,9 +385,12 @@ text-rendering: geometricPrecision 对标签文字做同样处理。*/
 <!-- ══ HTML 1 · 布局（顶栏 / 画布 / 侧边栏）══ -->
 <div class="layout">
   <header class="header">
-    <div class="header-brand">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M 16.69 5.44 L 7.31 5.44 L 12 12 L 7.31 18.56 L 16.69 18.56"/></svg>
-      Weave
+    <div class="header-brand" id="brandSigma" role="button" tabindex="0" data-i18n-title="egg.hint" title="Σ">
+      <svg class="brand-sigma" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M 16.69 5.44 L 7.31 5.44 L 12 12 L 7.31 18.56 L 16.69 18.56"/></svg>
+      <!-- 楔形遮罩：不可见，贴合 Σ 左侧并向右展开，随 Σ 移动；
+           当它完全覆盖某个字母时，该字母被移除（逐字吞食） -->
+      <div class="wedge-mask" aria-hidden="true"></div>
+      <span class="brand-text">Weave</span>
     </div>
     <div class="btn-group">
       <div id="genColorDropdown">
@@ -495,9 +551,9 @@ text-rendering: geometricPrecision 对标签文字做同样处理。*/
         </div>
         <div class="settings-panel" data-settings-panel="about" style="display:none">
           <div class="about-content">
-            <div class="about-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M 16.69 5.44 L 7.31 5.44 L 12 12 L 7.31 18.56 L 16.69 18.56"/></svg></div>
+            <div class="about-icon" id="aboutSigma" role="button" tabindex="0" data-i18n-title="about.sigmaTip" title="千万不要点"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M 16.69 5.44 L 7.31 5.44 L 12 12 L 7.31 18.56 L 16.69 18.56"/></svg></div>
             <div class="about-row"><label data-i18n="about.appName">软件名称</label><span>Weave</span></div>
-            <div class="about-row"><label data-i18n="about.version">版本号</label><span>v1.1</span></div>
+            <div class="about-row"><label data-i18n="about.version">版本号</label><span>v1.1.1</span></div>
             <div class="about-row"><label data-i18n="about.projectUrl">项目地址</label><a href="https://github.com/Quan-Chan/Weave" target="_blank">https://github.com/Quan-Chan/Weave</a></div>
             <div class="about-row"><label data-i18n="about.devHome">开发者主页</label><a href="https://github.com/Quan-Chan" target="_blank">https://github.com/Quan-Chan</a></div>
           </div>
@@ -647,7 +703,7 @@ const I18N = {
     'modal.cancel': '取消', 'modal.save': '保存', 'modal.customColor': '自选颜色', 'modal.confirm': '确认',
     // 关于 / 快速入门
     'about.appName': '软件名称', 'about.version': '版本号',
-    'about.projectUrl': '项目地址', 'about.devHome': '开发者主页',
+    'about.projectUrl': '项目地址', 'about.devHome': '开发者主页', 'about.sigmaTip': '千万不要点',
     // 设置
     'set.title': '设置', 'set.snapNodes': '对齐节点', 'set.snapNodesDesc': '节点位置对齐到网格；关闭后自由摆放',
     'set.snapSize': '节点大小对齐', 'set.snapSizeDesc': '节点大小对齐到网格；关闭后自由调整',
@@ -696,7 +752,9 @@ const I18N = {
     // 其他
     'misc.newNode': '新节点', 'misc.statusBadge': '{nodes} 节点 · {conns} 连线',
     'misc.color.blue': '蓝色', 'misc.color.cyan': '青色', 'misc.color.green': '绿色',
-    'misc.color.yellow': '黄色', 'misc.color.orange': '橙色'
+    'misc.color.yellow': '黄色', 'misc.color.orange': '橙色',
+    // Σ 彩蛋（startEasterEgg）
+    'egg.hint': '点我试试', 'egg.toast': 'Σ 吐出了一个节点！', 'egg.desc': '由 Σ 吐出的节点'
   },
   en: {
     'btn.addNode': '+ Node', 'btn.clear': 'Clear', 'btn.export': 'Export', 'btn.import': 'Import',
@@ -711,7 +769,7 @@ const I18N = {
     'modal.editTitle': 'Edit node', 'modal.label': 'Label', 'modal.desc': 'Description', 'modal.color': 'Color',
     'modal.cancel': 'Cancel', 'modal.save': 'Save', 'modal.customColor': 'Custom color', 'modal.confirm': 'OK',
     'about.appName': 'Name', 'about.version': 'Version',
-    'about.projectUrl': 'Project', 'about.devHome': 'Developer',
+    'about.projectUrl': 'Project', 'about.devHome': 'Developer', 'about.sigmaTip': 'Do NOT click',
     'set.title': 'Settings', 'set.snapNodes': 'Snap nodes',
     'set.snapNodesDesc': 'Snap node positions to the grid; off for free placement',
     'set.snapSize': 'Snap size', 'set.snapSizeDesc': 'Snap node sizes to the grid; off for free resizing',
@@ -758,7 +816,8 @@ const I18N = {
     'toast.keysReset': 'Keybindings reset to defaults',
     'misc.newNode': 'New node', 'misc.statusBadge': '{nodes} nodes · {conns} connections',
     'misc.color.blue': 'Blue', 'misc.color.cyan': 'Cyan', 'misc.color.green': 'Green',
-    'misc.color.yellow': 'Yellow', 'misc.color.orange': 'Orange'
+    'misc.color.yellow': 'Yellow', 'misc.color.orange': 'Orange',
+    'egg.hint': 'Click me', 'egg.toast': 'Σ spit out a node!', 'egg.desc': 'A node spat out by Σ'
   }
 };
 
@@ -791,18 +850,20 @@ Weave.Util = {
   //映射到绘制空间（CSS 像素、设备像素，或对
   //已预平移的世界空间上下文使用恒等映射）。单一实现，供
   //实时画布网格、导出快照网格及旧版重绘共用。
+  //注意：线端必须取映射后的矩形边界（而非硬编码 0）——legacy 路径
+  //上下文已 translate，硬编码 0 会让网格只覆盖世界原点右下象限；
+  //越界裁剪交给画布光栅化器，也不得按 X/Y<0 跳线。
   strokeGridLines(ctx, step, color, wL, wT, wR, wB, toX, toY) {
     ctx.strokeStyle = color;
     ctx.beginPath();
+    const left = toX(wL), right = toX(wR), top = toY(wT), bottom = toY(wB);
     for (let gx = Math.floor(wL / step) * step; gx <= wR; gx += step) {
       const X = toX(gx);
-      if (X < 0) continue;
-      ctx.moveTo(X, 0); ctx.lineTo(X, toY(wB));
+      ctx.moveTo(X, top); ctx.lineTo(X, bottom);
     }
     for (let gy = Math.floor(wT / step) * step; gy <= wB; gy += step) {
       const Y = toY(gy);
-      if (Y < 0) continue;
-      ctx.moveTo(0, Y); ctx.lineTo(toX(wR), Y);
+      ctx.moveTo(left, Y); ctx.lineTo(right, Y);
     }
     ctx.stroke();
   },
@@ -860,20 +921,35 @@ Weave.Util = {
     if (vi < rawLines.length) hasMore = true;
     return { lines: visualLines.slice(0, linesLimit), truncated: hasMore };
   },
-  //一个实心的小型圆角箭头，箭头尖端位于 (x,y)，指向
-  //`angle` 方向（旋转方向即曲线切线方向）。
-  drawExportArrow(ctx, x, y, angle, color) {
+  //与实时 SVG 箭头完全同形的画布箭头（旧实现是另一种细长
+  //小箭头，导致导出观感与屏幕不一致）：尖端位于 (x,y)，指向
+  //单位向量 (ux,uy)；底长 len、半宽 half，同色描边 strokeW 配
+  //圆角连接——逐项复刻 .conn-arrow 的 SVG 渲染（fill + round
+  //join 描边，linecap butt）。参数全取自 connArrows() 的返回值。
+  drawExportArrow(ctx, x, y, ux, uy, color, len, half, strokeW) {
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(angle);
+    ctx.rotate(Math.atan2(uy, ux));
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(-7, 2.4);
-    ctx.quadraticCurveTo(-9, 0, -7, -2.4);
+    ctx.lineTo(-len, half);
+    ctx.lineTo(-len, -half);
     ctx.closePath();
     ctx.fillStyle = color;
     ctx.fill();
+    ctx.lineWidth = strokeW;
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = color;
+    ctx.stroke();
     ctx.restore();
+  },
+  //XML 文本内容转义：瓦片 SVG 的 <style> 内嵌的是原始 CSS 文本
+  //（注释里可能含裸 `<`/`&`，如 Σ 彩蛋的"文字(1) < 蒙版(2)"）。
+  //该 SVG 以 data: URI 作为图片加载时由 XML 解析器严格解析，
+  //未转义的 `<` 会使整份 SVG 解析失败（img.onerror →
+  //svg-unsupported），导出被迫回退 legacy 重绘路径。
+  xmlEscapeText(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   },
   arrayBufferToBase64(buf) {
     const bytes = new Uint8Array(buf);
@@ -1166,6 +1242,9 @@ Weave.Geom = {
       outTipX: oTip.x, outTipY: oTip.y,
       inTipX: iTip.x, inTipY: iTip.y,
       vOut, vIn,
+      //导出（legacy 画布路径）复刻实时箭头形状所需的一等比参数：
+      //drawExportArrow 直接使用它们，避免两处尺寸漂移。
+      arrowLen: LEN, arrowHalf: HALF,
       strokeW: Math.max(1.5 * s, 0.75),
       hex
     };
@@ -1377,7 +1456,9 @@ const App = window.App = {
   _snapDataInterval: null,
   _snapRenderRaf: null,
   //数据流频率（Hz）。240Hz 已覆盖所有消费级显示器。
-  _snapDataHz: 240
+  _snapDataHz: 240,
+  //Σ 彩蛋动画运行标记（防重入；见 M11 startEasterEgg）。
+  _eggRunning: false
 };
 
 // App 基础设施工具（挂载须在 App 声明之后）
@@ -2535,9 +2616,17 @@ Object.assign(App, {
     // 路径（data-conn-key）与标签（data-ck）共享同一 key。
     const applyHover = on => {
       el.classList.toggle('hover', on);
-      el.closest('svg').querySelectorAll('[data-conn-key="' + k + '"], [data-ck="' + k + '"]').forEach(elem => {
+      const svgRoot = el.closest('svg');
+      svgRoot.querySelectorAll('[data-conn-key="' + k + '"], [data-ck="' + k + '"]').forEach(elem => {
         elem.classList.toggle('hover', on);
       });
+      //悬停加粗同样以属性写入（与 .line 的描边宽度策略一致）：
+      //选中态优先于悬停态（与旧 CSS 规则顺序相同）。
+      const vis = svgRoot.querySelector('.line[data-conn-key="' + k + '"]');
+      if (vis) {
+        const sel = this.selectedConnIds.has(k);
+        vis.setAttribute('stroke-width', String((sel ? 4 : (on ? 3.5 : 2.5)) * this.scale));
+      }
     };
     el.addEventListener('mouseenter', () => applyHover(true));
     el.addEventListener('mouseleave', () => applyHover(false));
@@ -2547,10 +2636,6 @@ Object.assign(App, {
     const svg = this._getEl('linesSvg');
     if (!svg) return;
     if (!svg.getAttribute('width')) { svg.setAttribute('width', '1'); svg.setAttribute('height', '1'); }
-    /*将缩放值以 CSS 变量的形式传播，使 stroke-width 始终保持按比例*/
-    svg.style.setProperty('--line-scale', this.scale);
-    const curveOverlay = this._getEl('curveOverlay');
-    if (curveOverlay) curveOverlay.style.setProperty('--line-scale', this.scale);
 
     // ── 数据驱动的连线渲染 ── 
     // 所有连线几何都在此处由当前数据 + 缩放实时计算得出。
@@ -2662,6 +2747,7 @@ Object.assign(App, {
     //颜色链复用 _resolveColor（与永久连线同一实现）。
     const rc = this._resolveColor(sd.colorClass);
     const tempLine = Weave.Util.svgEl('path', { d: d, class: 'line temp' + (rc.isPreset ? ' s-' + rc.cls : '') });
+    tempLine.setAttribute('stroke-width', String(2.5 * this.scale));
     tempLine.style.pointerEvents = 'none';
     if (!rc.isPreset) tempLine.setAttribute('style', 'stroke:' + rc.hex);
     tempGroup.appendChild(tempLine);
@@ -2715,6 +2801,9 @@ Object.assign(App, {
     });
     path.setAttribute('d', geo.d);
     path.setAttribute('class', pathCls);
+    //描边宽度以属性写入（见 .line 的 CSS 注释：calc()/var() 在 Firefox
+    //中不可靠，且 CSS 过渡会在缩放时造成线宽抖动）。
+    path.setAttribute('stroke-width', String((isSelected ? 4 : 2.5) * s));
     if (geo.pathStyle) path.setAttribute('style', geo.pathStyle); else path.removeAttribute('style');
     path.style.pointerEvents = 'none';
 
@@ -4448,8 +4537,13 @@ Object.assign(App, {
     hGroup.appendChild(addGuideLine(fromAnchor.x, fromAnchor.y, fromAnchor.x + cp.c1x, fromAnchor.y + cp.c1y));
     hGroup.appendChild(addGuideLine(toAnchor.x, toAnchor.y, toAnchor.x + cp.c2x, toAnchor.y + cp.c2y));
     const mkHandle = (idx, hx, hy) => {
+      //把手锚点按画布（世界）坐标统一尺寸：半径 8 世界像素、描边 2 世界像素，
+      //随缩放同步缩放——与节点尺寸锚点 .rsz-handle（10px 固定 CSS，随节点
+      //缩放）一致，任何缩放级别下手柄与画布内容的相对大小不变。
+      //此前 r: 8/s 使尺寸反比于缩放（缩小视图时把手巨大、放大时几乎
+      //不可见）；固定屏幕尺寸同样错误——手柄相对画布大小会随缩放漂移。
       const circle = Weave.Util.svgEl('circle', {
-        cx: hx * s, cy: hy * s, r: 8 / s, fill: '#fff', stroke: '#3b82f6',
+        cx: hx * s, cy: hy * s, r: 8 * s, fill: '#fff', stroke: '#3b82f6',
         'stroke-width': String(2 * s), style: 'cursor:move;pointer-events:all'
       });
       circle.dataset.handleIdx = idx;
@@ -4526,9 +4620,22 @@ Object.assign(App, {
 });
 
 /* ══ M11 · UI 外壳 ──────────────────────────────────────────────────
-   职责: 右键菜单、关于/设置弹窗、键位录制、专注模式、状态徽标
+   职责: 右键菜单、关于/设置弹窗、键位录制、专注模式、状态徽标、Σ 彩蛋
    依赖: M02, M08, M09, M10
    ────────────────────────────────────────────────────────────────── */
+
+/*Σ 彩蛋动画参数（startEasterEgg）：吞食阶段时长、Σ 位移、吞食前沿
+  （Σ 左缘，header-brand 坐标 x=0）、节点弹出/飞行时长。*/
+const EGG_EAT_MS = 680;
+const EGG_TRAVEL = 80;
+const EGG_FRONT = 0;
+const EGG_POP_MS = 220;
+const EGG_FLY_MS = 480;
+
+/*软件详情 Σ 彩蛋参数（spinAboutSigma）：单向旋转两圈半（900°）的时长，
+  正反两段之间的停顿。反向回正复用 ABOUT_SPIN_MS。*/
+const ABOUT_SPIN_MS = 1150;
+const ABOUT_SPIN_PAUSE_MS = 160;
 
 Object.assign(App, {
   _clearCtx() { this._ctxNodeId = this._ctxConnId = this._ctxEditTarget = null; },
@@ -4697,6 +4804,150 @@ Object.assign(App, {
     }
     if (this._ctxConnId) this.inlineEdit('edge', this._ctxConnId);
     this._clearCtx();
+  },
+
+  //Σ 彩蛋：点击左上角 Σ 图标 → Σ 从左到右吞下标题文字，
+  //吐出节点（直飞）并退回原位，标题淡入（全程约 1.5 秒，可撤销）。
+  startEasterEgg() {
+    if (this._eggRunning || this.readOnly) return;
+    const brand = this._getEl('brandSigma');
+    const letters = brand ? brand.querySelectorAll('.brand-letter') : [];
+    if (!brand || !letters.length) return;
+    this._eggRunning = true;
+
+    //第 1 幕：Σ 左→右扫过，蒙版逐字母吞食（字母被完全盖在 Σ 左侧时消失）
+    brand.classList.add('egg-active');
+    this._eggScheduleLetterEat(letters, brand);
+
+    const textLabel = Array.from(letters, l => l.textContent).join('') || 'Weave';
+
+    //第 2 幕：吐出节点（直飞）+ 退回原位；第 3 幕：落地 + 标题淡入
+    setTimeout(() => this._eggSpit(textLabel, brand), EGG_EAT_MS);
+  },
+
+  //为每个字母按吞食前沿（Σ 左凹槽顶点）折算消失时刻，到点后移除。
+  //字母被完全盖在 Σ 左侧（右缘 ≤ 蒙版右缘）时蒙版立即擦除它，JS 随后移除。
+  _eggScheduleLetterEat(letters, brand) {
+    letters.forEach(l => {
+      const right = (l.offsetLeft || 0) + (l.offsetWidth || 9);
+      const delay = Math.max(0, Math.min(EGG_EAT_MS, (right - EGG_FRONT) / EGG_TRAVEL * EGG_EAT_MS));
+      setTimeout(() => {
+        if (brand.classList.contains('egg-active') && !l.classList.contains('eaten')) l.classList.add('eaten');
+      }, delay);
+    });
+  },
+
+  //第 2 幕：从 Σ 弹出节点并直飞视口中心，落地后创建真实节点、恢复标题。
+  async _eggSpit(textLabel, brand) {
+    const stage = this._getEl('canvasStage');
+    const sigma = brand.querySelector('.brand-sigma') || brand;
+    const s = sigma.getBoundingClientRect();
+    const c = stage.getBoundingClientRect();
+    const from = { x: s.left + s.width / 2, y: s.top + s.height / 2 };
+    const to = { x: c.left + c.width / 2, y: c.top + c.height / 2 };
+
+    //Σ 退回原位，标题稍后淡入（CSS 动画处理）
+    brand.classList.remove('egg-active');
+    brand.classList.add('egg-spit');
+
+    const fly = this._eggCreateFlyNode(textLabel, to);
+    document.body.appendChild(fly);
+
+    const dx = from.x - to.x, dy = from.y - to.y;
+    const at = (x, y) => 'translate(-50%,-50%) translate(' + x + 'px,' + y + 'px)';
+
+    //弹出：在 Σ 处快速放大（小而直接）
+    const pop = fly.animate([
+      { transform: at(dx, dy) + ' scale(.4)', opacity: 0 },
+      { transform: at(dx, dy) + ' scale(1.06)', opacity: 1, offset: .75 },
+      { transform: at(dx, dy) + ' scale(1)', opacity: 1 }
+    ], { duration: EGG_POP_MS, easing: 'cubic-bezier(.25,.6,.3,1)', fill: 'forwards' });
+
+    try {
+      await pop.finished;
+      //直飞：Σ → 视口中心（减速收尾，无过冲/晃动），在弹出结束后开始
+      const flight = fly.animate([
+        { transform: at(dx, dy) + ' scale(1)', opacity: 1 },
+        { transform: at(0, 0) + ' scale(1)', opacity: 1 }
+      ], { duration: EGG_FLY_MS, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'forwards' });
+      await flight.finished;
+    } catch (e) { fly.remove(); this._eggFinish(brand); return; }
+
+    fly.remove();
+    if (!this.readOnly) this._eggLand(textLabel, brand);
+    else this._eggFinish(brand);
+  },
+
+  //构造飞行节点（body 级 fixed、z-index 高于顶栏，从 Σ 处弹出）。
+  _eggCreateFlyNode(textLabel, to) {
+    const rc = this._resolveColor(this._selectedGenColor || 'blue');
+    const fly = document.createElement('div');
+    fly.className = 'node';
+    fly.style.cssText = 'position:fixed;left:' + to.x + 'px;top:' + to.y + 'px;width:' + NODE_W + 'px;height:' + NODE_H + 'px;z-index:6000;pointer-events:none;margin:0;transform-origin:center';
+    const header = 'node-header' + (rc.isPreset ? ' h-' + rc.cls : '');
+    const style = rc.isPreset ? '' : ' style="background:linear-gradient(135deg,' + rc.hex + ',' + rc.shadeHex + ');text-shadow:0 1px 3px rgba(0,0,0,.35)"';
+    fly.innerHTML =
+      '<div class="' + header + '"' + style + '>' + Weave.Util.escapeHtml(textLabel) + '</div>' +
+      '<div class="node-body"><span class="node-val">' + Weave.Util.escapeHtml(this.t('egg.desc')) + '</span></div>';
+    return fly;
+  },
+
+  //第 3 幕：在视口中心创建真实节点（进入历史，可撤销），随后恢复标题。
+  _eggLand(textLabel, brand) {
+    const vc = this._viewportCenterWorld();
+    const x = vc.x - NODE_W / 2, y = vc.y - NODE_H / 2;
+    const savedSnap = this._snapNodes;
+    this._snapNodes = false;
+    const id = this._addNodeAt(x, y, true);
+    this._snapNodes = savedSnap;
+    const el = id ? this._nodeElMap.get(id) : null;
+    if (el) {
+      //落地节点沿用被"吃掉"的标题文字与描述，与飞行节点无缝衔接。
+      const n = id ? this._getNodeById(id) : null;
+      if (n) { n.label = textLabel; n.desc = this.t('egg.desc'); this._updateNodeAppearance(el, n); }
+      el.style.setProperty('--egg-cx', x + 'px');
+      el.style.setProperty('--egg-cy', y + 'px');
+      el.classList.add('egg-land');
+      el.addEventListener('animationend', function h() {
+        el.classList.remove('egg-land');
+        el.style.removeProperty('--egg-cx');
+        el.style.removeProperty('--egg-cy');
+        el.removeEventListener('animationend', h);
+      });
+    }
+    this.showToast(this.t('egg.toast'));
+    this._eggFinish(brand);
+  },
+
+  //收尾：恢复字母、移除动画类、复位运行标记。
+  _eggFinish(brand) {
+    brand.querySelectorAll('.brand-letter').forEach(l => l.classList.remove('eaten'));
+    brand.classList.remove('egg-spit');
+    this._eggRunning = false;
+  },
+
+  //软件详情 Σ 彩蛋（spinAboutSigma）：点击"软件详情"面板中的 Σ 图标
+  //→ 正向旋转两圈半（900°），稍顿后反向旋转回正到原始位置。
+  //动画期间忽略重复点击；任何中断（元素被移除/动画被取消）都在
+  //finally 中取消全部填充动画并复位运行标记，图标回到无旋转状态。
+  async spinAboutSigma() {
+    const icon = document.getElementById('aboutSigma');
+    if (!icon || this._aboutSpinRunning) return;
+    this._aboutSpinRunning = true;
+    const spin = (from, to) => icon.animate(
+      [{ transform: 'rotate(' + from + 'deg)' }, { transform: 'rotate(' + to + 'deg)' }],
+      { duration: ABOUT_SPIN_MS, easing: 'cubic-bezier(.45,.05,.35,1)', fill: 'forwards' });
+    try {
+      const out = spin(0, 900);
+      await out.finished;
+      await new Promise(r => setTimeout(r, ABOUT_SPIN_PAUSE_MS));
+      const back = spin(900, 0);
+      await back.finished;
+    } catch (e) { /* 动画被打断——由 finally 统一复位 */ }
+    finally {
+      icon.getAnimations().forEach(a => { try { a.cancel(); } catch (e2) {} });
+      this._aboutSpinRunning = false;
+    }
   }
 });
 
@@ -4827,7 +5078,6 @@ Object.assign(App, {
     if (oldSvg) oldSvg.remove();
     const svg = Weave.Util.svgEl('svg', { class: 'lines-svg', width: '1', height: '1' });
     svg.style.overflow = 'visible';
-    svg.style.setProperty('--line-scale', '1');
     const connGroup = Weave.Util.svgEl('g', { class: 'conn-group' });
     const linesGroup = Weave.Util.svgEl('g', { class: 'lines' });
     const labelsGroup = Weave.Util.svgEl('g', { class: 'labels' });
@@ -4840,6 +5090,8 @@ Object.assign(App, {
       if (!fromNode || !toNode) return;
       const geo = this._buildLinePath(conn, fromNode, toNode, 1);
       const path = Weave.Util.svgEl('path', { d: geo.d, class: geo.pathCls });
+      //导出路径同样需要显式描边宽度（比例 1）；与实时渲染一致，不用 CSS 计算。
+      path.setAttribute('stroke-width', '2.5');
       if (geo.pathStyle) path.setAttribute('style', geo.pathStyle);
       linesGroup.appendChild(path);
       //箭头（与实时渲染相同的钳制线段逻辑，比例 1）
@@ -4867,7 +5119,7 @@ Object.assign(App, {
   //子树，将其平移使世界坐标 (offX, offY) 落在瓦片原点。
   _buildExportSvgXml(styleText, snapshotXml, tw, th, offX, offY) {
     return '<svg xmlns="http://www.w3.org/2000/svg" width="' + tw + '" height="' + th + '" viewBox="0 0 ' + tw + ' ' + th + '">' +
-      '<style>' + styleText + '</style>' +
+      '<style>' + Weave.Util.xmlEscapeText(styleText) + '</style>' +
       '<foreignObject x="0" y="0" width="' + tw + '" height="' + th + '">' +
       '<div xmlns="http://www.w3.org/1999/xhtml" style="position:relative;width:' + tw + 'px;height:' + th + 'px;overflow:hidden">' +
       snapshotXml.replace('data-export-pos="0,0"', 'style="left:' + offX + 'px;top:' + offY + 'px"') +
@@ -5114,8 +5366,8 @@ Object.assign(App, {
       //箭头（与实时渲染相同的钳制线段向量逻辑）
       const ar = Weave.Geom.connArrows(fromP, toP, cp, 1, rc.hex,
         Weave.Geom.connArrowBaseX(fromNode), Weave.Geom.connArrowBaseX(toNode));
-      Weave.Util.drawExportArrow(ctx, ar.outTipX, ar.outTipY, Math.atan2(ar.vOut.y, ar.vOut.x), rc.hex);
-      Weave.Util.drawExportArrow(ctx, ar.inTipX, ar.inTipY, Math.atan2(ar.vIn.y, ar.vIn.x), rc.hex);
+      Weave.Util.drawExportArrow(ctx, ar.outTipX, ar.outTipY, ar.vOut.x, ar.vOut.y, rc.hex, ar.arrowLen, ar.arrowHalf, ar.strokeW);
+      Weave.Util.drawExportArrow(ctx, ar.inTipX, ar.inTipY, ar.vIn.x, ar.vIn.y, rc.hex, ar.arrowLen, ar.arrowHalf, ar.strokeW);
       if (conn.label) {
         const mp = Weave.Geom.connLabelPos(fromP, toP, cp);
         ctx.font = 'italic 10px Inter, sans-serif';
@@ -5333,6 +5585,18 @@ document.addEventListener('keydown', function(e) {
   App._keybinds = App._loadKeybinds();
   App._bindKeybindInputs();
   App._bindInlineInputs();
+  /*Σ 彩蛋：把标题文字拆成单个字母 span（逐字吞食用），保持 HTML 单一文字来源。*/
+  const _brandText = document.querySelector('.brand-text');
+  if (_brandText && !_brandText.querySelector('.brand-letter')) {
+    const _chars = Array.from(_brandText.textContent.trim());
+    _brandText.textContent = '';
+    _chars.forEach(ch => {
+      const s = document.createElement('span');
+      s.className = 'brand-letter';
+      s.textContent = ch;
+      _brandText.appendChild(s);
+    });
+  }
   const saved = App._lsGetJson('flow_data');
   let restored = false;
   if (saved) {
@@ -5365,6 +5629,7 @@ document.addEventListener('keydown', function(e) {
   /* 绑定标题栏、侧边栏、上下文菜单、弹窗、关于按钮 —— 表格中
      每个按钮一行；新增一个按钮 = 在这里新增一个条目。 */
   const BIND_CLICKS = {
+    brandSigma: 'startEasterEgg', aboutSigma: 'spinAboutSigma',
     btnAddNode: 'addNode', btnClearAllNodes: 'clearAllNodes',
     btnDoExport: 'doExport', btnDoImport: 'doImport',
     btnCenterCanvas: 'centerCanvasOnNodes', undoBtn: 'canvasUndo', redoBtn: 'canvasRedo',
@@ -5379,6 +5644,20 @@ document.addEventListener('keydown', function(e) {
   };
   for (const id of Object.keys(BIND_CLICKS)) {
     document.getElementById(id).addEventListener('click', () => App[BIND_CLICKS[id]]());
+  }
+
+  /* Σ 彩蛋：键盘可达性（Enter/Space 触发） */
+  const brandSigma = document.getElementById('brandSigma');
+  if (brandSigma) {
+    brandSigma.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); App.startEasterEgg(); }
+    });
+  }
+  const aboutSigma = document.getElementById('aboutSigma');
+  if (aboutSigma) {
+    aboutSigma.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); App.spinAboutSigma(); }
+    });
   }
 
   /* 设置："对齐节点" 默认开启（历史沿用的网格吸附），"节点大小
