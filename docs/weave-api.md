@@ -11,11 +11,14 @@
 ## 目录
 
 1. [快速上手](#1-快速上手)
-2. [`weave` 桥接对象（推荐优先使用）](#2-weave-桥接对象推荐优先使用)
+2. [`weave` 桥接对象](#2-weave-桥接对象)
 3. [`Weave` 工具库命名空间](#3-weave-工具库命名空间)
 4. [`App` 编辑器应用对象](#4-app-编辑器应用对象)
    - [4.1 节点增删改查](#41-节点增删改查)
    - [4.2 连线管理](#42-连线管理)
+   - [4.2.1 分区（region）](#421-分区region)
+   - [4.2.2 收起 / 展开（collapse）](#422-收起--展开collapse)
+   - [4.2.3 关联高亮](#423-关联高亮)
    - [4.3 画布与视口](#43-画布与视口)
    - [4.4 选择与右键菜单](#44-选择与右键菜单)
    - [4.5 内联编辑与模态框](#45-内联编辑与模态框)
@@ -46,31 +49,40 @@ await weave.exportPng()
 
 ---
 
-## 2. `weave` 桥接对象（推荐优先使用）
+## 2. `weave` 桥接对象
 
-插件在页面内注入的 `weave` 对象，封装了最常用操作，返回值都经过 Weave 自身的序列化 / 渲染管线，安全且语义完整。
+插件在页面内注入的 `weave` 对象，封装了最常用操作，返回值都经过 Weave 自身的序列化 / 渲染管线。
 
 | 方法 | 参数 | 返回 | 用途 |
 |---|---|---|---|
-| `addNode(spec)` | `spec: { label?, desc?, color?, x?, y?, w?, h? }` | 新节点对象 `{id,label,desc,color,x,y,mirrored,w,h}` | 加一个节点，自动选中、保存、重渲染。颜色可为预设 id（`blue`/`cyan`/`green`/`yellow`/`orange`，旧名 `amber`/`rose`/`teal`/`violet` 亦可）或 `#rrggbb`；未知 id 会回退为蓝色 |
-| `getData()` | — | `{nodes, connections, viewport}` | 当前画布的完整序列化状态（环境：Weave 导出 JSON 同款格式） |
-| `setData(data)` | `data: {nodes, connections?, viewport?}` | 加载后的新状态（同 `getData` 格式） | 用一份 JSON 整体替换画布，自动校验、重建层次、重置撤销历史并渲染 |
+| `addNode(spec)` | `spec: { label?, desc?, color?, x?, y?, w?, h? }` | 新节点对象 `{id,label,desc,color,x,y,mirrored,w,h}` | 加一个节点，自动选中、保存、重渲染。`x`/`y`/`w`/`h` 为像素。颜色可为预设 id（`blue`/`cyan`/`green`/`yellow`/`orange`，旧名 `amber`/`rose`/`teal`/`violet` 亦可）或 `#rrggbb`；未知 id 会回退为蓝色。节点落进已有分区时自动加入该分区 `nodeIds` |
+| `addRegion(spec)` | `spec: { x, y, w, h, label?, color? }` | 新分区对象 `{id,label,color,x,y,w,h,nodeIds,parentId}` | 画一个分区框。`x`/`y`/`w`/`h` 为像素。整框包含的未归属节点自动加入 `nodeIds`；中心命中的最深现存分区设为 `parentId`；自动选中、保存、重渲染 |
+| `removeRegion(id)` | `id` | 剩余分区数组 | 删除一个分区框；框内节点与连线保留，直接子分区上提到被删分区的父级 |
+| `collapseNode(nodeId)` | `nodeId` | `boolean` | 收起节点的可达后代链。无可收起内容或多父冲突时返回 `false` 且不改状态 |
+| `expandNode(nodeId)` | `nodeId` | `boolean` | 展开已收起节点，隐藏节点按保存的相对偏移恢复。未收起时返回 `false` |
+| `toggleCollapse(nodeId)` | `nodeId` | `boolean` | 收起 ⇄ 展开切换 |
+| `canCollapse(nodeId)` | `nodeId` | `boolean` | 节点当前是否可收起（有可达后代且无多父冲突） |
+| `getData()` | — | `{nodes, connections, regions, viewport}` | 当前画布的完整序列化状态（Weave 导出 JSON 同款格式；已收起节点带 `collapse` 字段） |
+| `setData(data)` | `data: {nodes, connections?, regions?, viewport?}` | 加载后的新状态（同 `getData` 格式） | 用一份 JSON 整体替换画布，自动校验、重建层次、重置撤销历史并渲染；缺 `regions` 的旧数据兼容为空 |
 | `exportPng()` | — | `Promise<{dataUrl, name}>` | 复用 Weave 自己的导出管线，返回当前画布渲染出的 PNG data URL（不触发下载） |
-| `count()` | — | `{nodes, connections}` | 节点与连线数量 |
+| `count()` | — | `{nodes, connections, regions}` | 节点 / 连线 / 分区数量 |
 
 **示例**
 
 ```js
-// 一句话生成一张三节点两连线的图
+// 一句话生成一张三节点两连线加一个分区的图
 weave.setData({
   nodes: [
     { id: "a", label: "开始", color: "green", x: 0, y: 0 },
-    { id: "b", label: "处理", color: "blue", x: 320, y: 0 },
-    { id: "c", label: "结束", color: "orange", x: 640, y: 0 },
+    { id: "b", label: "处理", color: "blue", x: 16, y: 0 },
+    { id: "c", label: "结束", color: "orange", x: 32, y: 0 },
   ],
   connections: [
     { id: "c1", from: "a", to: "b", label: "" },
     { id: "c2", from: "b", to: "c", label: "" },
+  ],
+  regions: [
+    { id: "r1", label: "流程", color: "cyan", x: -1, y: -2, w: 36, h: 8, nodeIds: ["a", "b", "c"], parentId: null },
   ],
 })
 // await weave.exportPng() 可取得这张图的 PNG
@@ -120,7 +132,12 @@ weave.setData({
 | `arrowShapeD` | `arrowShapeD(...) -> string` | 箭头 SVG path |
 | `worldToScreen` | `worldToScreen(wx, wy, panX, panY, scale) -> {x,y}` | 世界坐标 → 屏幕坐标 |
 | `screenToWorld` | `screenToWorld(sx, sy, panX, panY, scale) -> {x,y}` | 屏幕坐标 → 世界坐标 |
-| `boxRect` | `boxRect(lx,ly,rx,ry) -> rect` | 矩形对象 |
+| `boxRect` | `boxRect(sx, sy, cx, cy) -> {lx,ly,rx,ry}` | 框选矩形的规范 min/max 归一化 |
+| `rectContains` | `rectContains(lx, ly, rx, ry, bx, by, bw, bh) -> bool` | 整矩形 `(bx,by,bw,bh)` 位于 `(lx,ly)-(rx,ry)` 之内（含边界） |
+| `rectsIntersect` | `rectsIntersect(lx, ly, rx, ry, bx, by, bw, bh) -> bool` | 矩形相交（擦边不算相交） |
+| `collapseClosure` | `collapseClosure(connections, rootId) -> id[]` | 沿连线方向收集根节点之后全部可达节点的 id（不含根自身） |
+| `hasMultiParentConflict` | `hasMultiParentConflict(connections, closureIds) -> bool` | 闭包内是否存在被 ≥2 个不同节点连接的节点（同一节点平行连线只算一个父节点） |
+| `snapFrames` | `snapFrames(dx, dy) -> {x,y}[]` | 过冲吸附帧序列（100ms 线性 + 50ms 过冲尾段，1ms 采样） |
 | `nodesBBox` | `nodesBBox(nodes, sizeFn) -> {minX,minY,maxX,maxY}` | 批量节点包围盒 |
 | `getSocketAnchor` | `getSocketAnchor(...) -> {x,y}` | socket 锚点位置 |
 | `connLabelPos` | `connLabelPos(...) -> {x,y}` | 连线标签位置 |
@@ -151,11 +168,11 @@ Weave.Util.clamp(150, 0, 100)            // 100
 
 | 函数 | 签名 | 说明 |
 |---|---|---|
-| `addNode()` | `addNode() -> void` | 通过「+节点」同款锚点逻辑加一个节点（默认在视口中心或上次锚点右侧） |
+| `addNode()` | `addNode() -> void` | 通过「+节点」同款锚点逻辑加一个节点（默认在视口中心或上次锚点右侧）；落进已有分区时自动加入该分区 `nodeIds` |
 | `_addNodeAt(worldX, worldY, asPosition?)` | `_addNodeAt(x, y, asPosition) -> id` | 在世界坐标处加节点；`asPosition=true` 时把 (x,y) 当左上角而非居中点 |
-| `removeNode(id)` | `removeNode(id) -> void` | 删除一个节点（连带删除相关连线） |
+| `removeNode(id)` | `removeNode(id) -> void` | 删除一个节点（连带删除相关连线，并从分区 `nodeIds` 剔除） |
 | `removeNodes(ids)` | `removeNodes([id,...]) -> void` | 批量删除 |
-| `clearAllNodes()` | `clearAllNodes() -> void` | 清空所有节点与连线 |
+| `clearAllNodes()` | `clearAllNodes() -> void` | 清空所有节点与连线与分区（含原生 confirm 弹窗） |
 | `_cloneNode(src, offsetX?, offsetY?)` | `_cloneNode(src, dx?, dy?) -> newId` | 克隆节点（标签带「副本」后缀），默认偏移 (30,30) |
 | `copyNodes()` / `pasteNodes()` | — | 复制/粘贴所选节点（含连线，居中到视口） |
 | `selectAllNodes()` | — | 全选节点 |
@@ -166,7 +183,7 @@ Weave.Util.clamp(150, 0, 100)            // 100
 **示例**
 
 ```js
-// 用原生数据直接改（最灵活）
+// 用原生数据直接改
 App.canvasState.nodes.push({
   id: App._genId(), label: "手写节点", desc: "", color: "violet",
   x: 0, y: 0, mirrored: false, w: 170, h: 80,
@@ -194,6 +211,96 @@ App.canvasState.connections.push(c);
 App.saveCanvasSnapshot(); App.renderCanvas();
 ```
 
+### 4.2.1 分区（region）
+
+分区是画布上的可见矩形框，用于把若干节点归入同一区域，可嵌套。一个节点同一时刻至多归属一个分区；`nodeIds` 为该分区的直属节点（拖入拖出自动维护），`parentId` 为父分区 id，`null` 表示顶级。分区在渲染上位于连线层之下，父分区先画、子分区叠于其上。
+
+| 函数 | 签名 | 说明 |
+|---|---|---|
+| `addRegion(spec)` | `addRegion({x,y,w,h,label?,color?}) -> region` | 建分区（像素坐标），见 §2 `weave.addRegion`。整框包含的未归属节点入 `nodeIds`，中心命中的最深现存分区为 `parentId` |
+| `removeRegion(id)` | `removeRegion(id) -> void` | 删除分区框；框内节点/连线保留，直接子分区上提到被删分区的父级 |
+| `openRegionModal(id)` | — | 打开分区属性模态框（名称 / 颜色） |
+| `saveRegionModal()` / `closeRegionModal()` | — | 保存 / 关闭分区模态框 |
+| `_getRegionById(id)` | — | 按 id 查分区 |
+| `_regionAtPoint(wx, wy)` | — | 世界坐标点命中的最深分区；未命中返回 `null` |
+| `_regionChildIds(parentId)` | — | 直接子分区 id 集合 |
+| `_regionDescendantIds(id)` | — | 全部后代分区 id（DFS） |
+| `_regionAncestorIds(id)` | — | 父链上所有分区 id |
+| `_regionAllNodeIds(regionId)` | — | 分区及全部后代分区的节点 id 并集 |
+| `_syncNodeRegionMembership(nodeId)` | — | 按节点中心点命中的最深分区同步归属（拖拽落位与新建节点后调用） |
+| `selectedRegionId` | 字段 | 当前选中分区 id，无选中为 `null` |
+| `canvasState.regions` | 数组 | 分区数据，可直接 push/splice（之后 `saveCanvasSnapshot()` + `renderCanvas()`） |
+
+分区格式（内存 / 序列化）：`{id, label, color, x, y, w, h, nodeIds, parentId}`。序列化时 `x`/`y`/`w`/`h` 与节点同规则折算为网格单位。
+
+**示例**
+
+```js
+// 三个节点外面套一个分区
+const rg = weave.addRegion({ x: -80, y: -140, w: 1100, h: 360, label: "核心模块", color: "green" });
+rg.id
+```
+
+### 4.2.2 收起 / 展开（collapse）
+
+收起把一个节点沿连线可达的后代链隐藏，画布只显示根节点。收起根节点的 `collapse` 字段记录 `{hidden: [{id, dx, dy}, ...]}`，`dx`/`dy` 是各隐藏节点相对根节点的偏移（收起瞬间保存；展开时按根最新坐标 + 偏移恢复相对位置）。
+
+规则：
+- 闭包沿连线方向（`from` → `to`）收集全部可达节点，含分支与汇合。
+- 闭包内任一节点被 ≥2 个节点连接时禁止收起（多父冲突），收起操作返回 `false`。
+- 嵌套收起：外层根的闭包一并收下内层根节点；内层根的 `collapse` 记录原样保留，展开外层不会展开内层。
+- 被收起的节点不参与渲染与"适应视图"边界；删除收起根节点时先释放其隐藏节点。
+
+| 函数 | 签名 | 说明 |
+|---|---|---|
+| `collapseChain(nodeId)` | `collapseChain(id) -> bool` | 收起节点可达链；无后续节点或冲突时返回 `false` |
+| `expandChain(nodeId)` | `expandChain(id) -> bool` | 展开收起；未收起时返回 `false` |
+| `toggleCollapse(nodeId)` | `toggleCollapse(id) -> bool` | 收起 ⇄ 展开切换 |
+| `_canToggleCollapse(nodeId)` | — | 该节点是否可收起（闭包非空且无多父冲突） |
+| `_isCollapseHidden(id)` | — | 节点是否被任意收起记录隐藏 |
+| `_isConnectionCollapseHidden(conn)` | — | 连线是否因任一端点被收起而隐藏 |
+| `_rebuildCollapseDerived()` | — | 重建收起派生缓存（隐藏并集 + 徽标可用性） |
+
+节点格式包含可选 `collapse` 字段（见 §2 `getData`）。`Weave.Geom.collapseClosure` 与 `Weave.Geom.hasMultiParentConflict` 提供同规则纯函数（见 §3）。
+
+**示例**
+
+```js
+// 建一条 A → B → C 链后收起 B（C 与 B→C 连线隐藏）
+const a = weave.addNode({ label: "A", x: 0, y: 0 });
+const b = weave.addNode({ label: "B", x: 300, y: 0 });
+const c = weave.addNode({ label: "C", x: 600, y: 0 });
+App.canvasState.connections.push(
+  App._createConnection(a.id, b.id),
+  App._createConnection(b.id, c.id),
+);
+App.saveCanvasSnapshot(); App.renderCanvas();
+weave.collapseNode(b.id);      // true
+weave.getData().nodes.find(n => n.id === b.id).collapse
+```
+
+### 4.2.3 关联高亮
+
+关联高亮把指定节点与其直接关联内容抬升到清晰层，其余内容模糊。高亮集合 = 被点节点 + 与它有连线关系的全部节点（一层）+ 两端都在集合内的连线（含标签）。纯视觉状态：不写入 `selectedNodeIds` / `selectedConnIds`，不产生撤销步骤，不随存档保存。拖动视角与缩放保留高亮；节点拖拽、连线点击、右键菜单、保存快照、渲染等画布操作清除高亮。
+
+| 函数 | 签名 | 说明 |
+|---|---|---|
+| `_highlightAtNode(nodeId)` | `_highlightAtNode(id) -> void` | 高亮一个节点及其一层关联节点与连线；再次调用其他节点时先清除上一次高亮 |
+| `_clearHighlight()` | — | 清除高亮，还原节点/连线原叠放顺序与模糊状态 |
+| `hlNodeIds` | 字段 | 当前高亮节点 id 集合；无高亮为 `null` |
+| `hlConnKeys` | 字段 | 当前高亮连线 key 集合；无高亮为 `null` |
+
+用户交互入口为按住 Alt 单击节点；`App._highlightAtNode(id)` 提供相同效果的程序化入口。
+
+**示例**
+
+```js
+// 高亮根节点及其一层关联内容
+App._highlightAtNode("a");
+// 清除
+App._clearHighlight();
+```
+
 ### 4.3 画布与视口
 
 | 函数 / 字段 | 签名 | 说明 |
@@ -206,7 +313,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 | `_zoomAbout(scale, cx, cy)` | — | 绕屏幕点缩放 |
 | `getWorldPos(e)` | — | 由鼠标事件取世界坐标 |
 | `_viewportCenterWorld()` | — | 视口中心的世界坐标 |
-| `_snap(v)` | — | 网格吸附 |
+| `_snap(v, useGrid?)` | `_snap(v, useGrid?) -> number` | 网格吸附；`useGrid` 缺省跟随「对齐节点」设置，显式传 `false` 只取整 |
 | `renderCanvas(opts?)` | `renderCanvas({center?}) -> void` | 全量重渲染（模型改完必调） |
 | `updateNodePositions()` | — | 只更新节点位置层 |
 | `updateCoordDisplay()` | — | 更新坐标 HUD |
@@ -237,7 +344,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 | `saveCanvasSnapshot()` | — | 当前状态入撤销历史（**每次数据变更后调用**），并自动 localStorage 保存 |
 | `canvasUndo()` / `canvasRedo()` | — | 撤销 / 重做（最多 50 步） |
 | `saveCanvas()` | — | 仅持久化到 localStorage（不产生历史） |
-| `_serializeData()` | — | 返回导出用序列化对象 `{nodes, connections, viewport}` |
+| `_serializeData()` | — | 返回导出用序列化对象 `{nodes, connections, regions, viewport}`（已收起节点带 `collapse` 字段；分区 `x/y/w/h` 与节点同规则折算为网格单位） |
 | `_restoreFromSerialized(d, opts?)` | — | 用序列化数据整体恢复画布 |
 | `_restoreCanvasSnapshot(snapshot)` | — | 恢复一条历史快照 |
 | `updateCanvasUndoButtons()` | — | 刷新撤销/重做按钮禁用态 |
@@ -250,7 +357,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 | `_exportPNGLegacy()` | — | 旧版数据重绘导出 |
 | `doExport()` | — | 导出 JSON 文件下载 |
 | `doImport()` | — | 打开文件选择器导入 JSON |
-| `_loadFromData(d)` | `_loadFromData({nodes, connections, viewport}) -> void` | 用一份 JSON 替换整个画布（自动校验/重建/渲染/快照） |
+| `_loadFromData(d)` | `_loadFromData({nodes, connections?, regions?, viewport?}) -> void` | 用一份 JSON 替换整个画布（自动校验/重建/渲染/快照；缺 `regions` 兼容为空） |
 | `_readJsonFile(file)` | — | 读取 JSON 文件对象 |
 | `_triggerDownload(dataUrl, name)` | — | 触发下载 |
 | `_guardHasNodes()` | — | 是否有节点（导出前置检查） |
@@ -282,7 +389,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 | `_loadKeybinds()` / `_resetKeybinds()` | — | 加载 / 恢复默认快捷键 |
 | `_startKeybindEdit(key, action)` / `_bindKeybindInputs()` / `_cancelKeybindEdit()` | — | 录制自定义快捷键 |
 
-支持的快捷键动作：`undo`、`redo`、`selectAll`、`copy`、`paste`、`delete`、`autoModal`、`chrome`。
+支持的快捷键动作：`undo`、`redo`、`selectAll`、`copy`、`paste`、`delete`、`region`（画分区）、`hlNode`（高亮关联节点）、`autoModal`、`chrome`。
 
 ### 4.10 只读模式 / UI 显示
 
@@ -292,7 +399,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 | `toggleChrome()` | — | 切换界面 chrome（隐藏/显示工具栏等） |
 | `showToast(text, type?, ms?)` | — | 顶部 toast 提示 |
 | `_getEl(id)` | — | 取某 id 的 DOM 元素（见 §5） |
-| `_updateStatusBadge()` | — | 刷新左下角「N 节点 · M 连线」徽标 |
+| `_updateStatusBadge()` | — | 刷新左下角「N 节点 · M 连线」徽标（分区不计入） |
 
 ### 4.11 App 全部成员索引
 
@@ -300,7 +407,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 
 | 类别 | 成员 |
 |---|---|
-| **状态字段** | `canvasState`、`dragState`、`isDragging`、`socketDragState`、`panX`、`panY`、`scale`、`selectedNodeIds`、`canvasPanState`、`canvasBoxState`、`_boxSelectJustCompleted`、`canvasHistoryIndex`、`_canvasHistoryMax`、`_linesRaf`、`_renderFilter`、`_cellSize`、`_nodeCells`、`_nodeCellMap`、`_connByNode`、`_connByIdMap`、`_lastVisibleCells`、`_lastRenderScale`、`_resolveColorCache`、`_forceRerenderPending`、`_modalNodeId`、`_inlineEditTarget`、`_inlineTeardown`、`_descEditNodeId`、`_descEditBlur`、`_descEditKeydown`、`_chromeHidden`、`_ctxNodeId`、`_ctxConnId`、`_ctxEditTarget`、`selectedConnIds`、`_curveEditState`、`_customColors`、`_cpState`、`_cpEls`、`_cpOnConfirm`、`_wheelImageData`、`_wheelCleanup`、`_selectedGenColor`、`readOnly`、`_autoOpenModal`、`_snapNodes`、`_snapSize`、`_suppressNextCanvasClick`、`_dragJustFinished`、`_zOrderDirty`、`_lastAddCenterX`、`_lastAddCenterY`、`_addCounter`、`_lang`、`_keybinds`、`_keybindEditing`、`_els`、`_nodeElMap`、`_nodeByIdCache`、`_nodeZOrder`、`_cachedCW`、`_cachedCH`、`_settings`、`_idSeq`、`_connOffsCache`、`debouncedAutoSave`、`_clipboard`、`_activeSnapAnims`、`_snapDataInterval`、`_snapRenderRaf`、`_snapDataHz`、`_dblClickTarget`、`_visPathByKey`、`_hitPathByKey`、`_labelByKey`、`_arrowPathByKey` |
+| **状态字段** | `canvasState`、`dragState`、`isDragging`、`socketDragState`、`panX`、`panY`、`scale`、`selectedNodeIds`、`canvasPanState`、`canvasBoxState`、`regionDragState`、`regionMoveState`、`selectedRegionId`、`_regionModeActive`、`_regionJustCreated`、`_regionPanMoved`、`_regionDblCreated`、`_regionDblRect`、`_regionDblLabel`、`_regionEditEl`、`_frameMoveRegionId`、`_regionResizeId`、`_boxSelectJustCompleted`、`canvasHistoryIndex`、`_canvasHistoryMax`、`_linesRaf`、`_renderFilter`、`_cellSize`、`_nodeCells`、`_nodeCellMap`、`_connByNode`、`_connByIdMap`、`_lastVisibleCells`、`_lastRenderScale`、`_resolveColorCache`、`_forceRerenderPending`、`_modalNodeId`、`_regionModalId`、`_inlineEditTarget`、`_inlineTeardown`、`_descEditNodeId`、`_descEditBlur`、`_descEditKeydown`、`_chromeHidden`、`_ctxNodeId`、`_ctxConnId`、`_ctxRegionId`、`_ctxEditTarget`、`selectedConnIds`、`_curveEditState`、`_customColors`、`_cpState`、`_cpEls`、`_cpOnConfirm`、`_wheelImageData`、`_wheelCleanup`、`_selectedGenColor`、`readOnly`、`_autoOpenModal`、`_snapNodes`、`_snapSize`、`_snapRegionPos`、`_snapRegionSize`、`_suppressNextCanvasClick`、`_dragJustFinished`、`_zOrderDirty`、`_lastAddCenterX`、`_lastAddCenterY`、`_addCounter`、`_lang`、`_keybinds`、`_keybindEditing`、`_els`、`_nodeElMap`、`_nodeByIdCache`、`_nodeZOrder`、`_cachedCW`、`_cachedCH`、`_settings`、`_idSeq`、`_connOffsCache`、`_collapseDerived`、`_regionSnapAnim`、`_eggRunning`、`debouncedAutoSave`、`_clipboard`、`_activeSnapAnims`、`_snapDataInterval`、`_snapRenderRaf`、`_snapDataHz`、`_dblClickTarget`、`_visPathByKey`、`_hitPathByKey`、`_labelByKey`、`_arrowPathByKey`、`hlNodeIds`、`hlConnKeys`、`_hlBaseOrder`、`_hlLiftPos` |
 | **工具方法** | `_getEl`、`_genId`、`_snap`、`t`、`showToast` |
 | **语言** | `_applyLangUI`、`setLang`、`setLangZh`、`setLangEn`、`_updateLangButtons` |
 | **存储** | `_lsGet`、`_lsSet`、`_lsGetJson` |
@@ -316,7 +423,10 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 | **交互** | `_bindDragListeners`、`onCanvasMouseDown`、`finalizeBoxSelect`、`onCanvasWheel`、`_bindSocketDrag`、`_bindNodeEvents`、`_bindResizeHandles`、`_initGlobalEvents`、`startNodeDrag`、`startSocketDrag`、`_findSocketHit`、`_onCanvasClick`、`_onCanvasDblClick` |
 | **快捷键** | `_loadKeybinds`、`_keyMatch`、`_keybindLabel` |
 | **描述编辑** | `_showDescEdit`、`_saveDescEdit`、`_closeDescEdit` |
-| **节点操作** | `clearAllNodes`、`_addNodeAt`、`_resetAddAnchor`、`addNode`、`copyNodes`、`pasteNodes`、`selectAllNodes`、`removeNode`、`removeNodes` |
+| **节点操作** | `clearAllNodes`、`_addNodeAt`、`_resetAddAnchor`、`addNode`、`copyNodes`、`pasteNodes`、`selectAllNodes`、`removeNode`、`removeNodes`、`_pruneCollapseOnRemove` |
+| **分区（region）** | `openRegionModal`、`saveRegionModal`、`closeRegionModal`、`removeRegion`、`ctxRegionFrameMove`、`ctxRegionResizeMode`、`toggleRegionMode`、`finalizeRegionCreate`、`startRegionMove`、`_setRegionMode`、`_regionAtPoint`、`_getRegionById`、`_regionChildIds`、`_regionDescendantIds`、`_regionAncestorIds`、`_regionDepth`、`_regionAllNodeIds`、`_regionContainsRegion`、`_syncNodeRegionMembership`、`_selectRegionOnly`、`_renderRegions`、`_updateRegionPreview`、`_applyRegionTransform`、`_startRegionResizeDrag`、`_enterRegionResize`、`_exitRegionResize`、`_enterRegionLabelEdit`、`_endRegionLabelEdit`、`_beginRegionLabelEdit`、`_cancelRegionSnapAnim`、`_animateRegionSnap`、`_clearRegionSelection`、`_markRegionDragFinished`、`_buildRegionModalDots` |
+| **收起 / 展开（collapse）** | `collapseChain`、`expandChain`、`toggleCollapse`、`_canToggleCollapse`、`_isCollapseHidden`、`_isConnectionCollapseHidden`、`_rebuildCollapseDerived`、`_collapseDerivedData`、`_flushRenderSync` |
+| **关联高亮** | `_highlightAtNode`、`_clearHighlight`、`_hlBlur`、`_hlLiftLayer`、`_hlLiftConnection`、`_hlLiftConns` |
 | **模态框** | `openNodeModal`、`closeModal`、`saveModal` |
 | **克隆/内联** | `_cloneNode`、`_enterNodeInlineEdit`、`_bindInlineInputs`、`closeInlineEdit`、`_getInlineInput`、`saveInlineEdit`、`inlineEdit` |
 | **右键菜单** | `ctxProps`、`ctxMirror`、`ctxResize`、`ctxResetSize`、`ctxDup`、`ctxDel` |
@@ -324,7 +434,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 | **只读/设置/chrome** | `toggleReadOnly`、`showSettings`、`_showSettingsTab`、`_startKeybindEdit`、`_cancelKeybindEdit`、`_bindKeybindInputs`、`_resetKeybinds`、`closeSettings`、`toggleChrome` |
 | **右键/导入导出** | `showCtx`、`ctxEdit`、`_readJsonFile`、`_guardHasNodes`、`_triggerDownload`、`doExport`、`_inlineExportFonts`、`_buildExportStyleText`、`_buildExportSnapshot`、`_buildExportSvgXml`、`_loadSvgImage`、`_foreignObjectProbe`、`_canUseDomSnapshot`、`_runSnapshotTiles`、`_validateExportContent`、`_drawExportGrid`、`_computeContentBounds`、`exportPNG`、`_exportPNGLegacy`、`doImport` |
 
-> 约定：带 `_` 前缀的方法虽属「内部」，但在该 iframe 内同样可直接调用；下划线方法多用于底层管线，改数据后记得调用 `saveCanvasSnapshot()` 与 `renderCanvas()` 使改动可见并进入撤销历史。
+> 带 `_` 前缀的方法属内部实现，在该 iframe 内同样可直接调用；这些方法多用于底层管线，改数据后调用 `saveCanvasSnapshot()` 与 `renderCanvas()` 使改动可见并进入撤销历史。
 
 ---
 
@@ -332,7 +442,9 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 
 编辑器的 DOM 元素 id 如下，可用 `App._getEl('id')` 或 `document.getElementById('id')` 访问（多数由 `App._getEl` 缓存）。
 
-**工具栏按钮**：`btnAddNode`（+节点）、`btnClearAllNodes`（清空）、`btnDoExport`（导出 JSON）、`btnDoImport`（导入 JSON）、`btnExportPNG`（导出 PNG）、`btnCenterCanvas`（居中）、`btnShowSettings`（设置）、`sidebarReadOnlyBtn`（只读）、`undoBtn` / `redoBtn`、`btnLangZh` / `btnLangEn`、`btnResetKeybinds`。
+**工具栏按钮**：`btnAddNode`（+节点）、`btnClearAllNodes`（清空）、`btnRegion`（分区）、`btnDoExport`（导出 JSON）、`btnDoImport`（导入 JSON）、`btnExportPNG`（导出 PNG）、`btnCenterCanvas`（居中）、`btnShowSettings`（设置）、`sidebarReadOnlyBtn`（只读）、`undoBtn` / `redoBtn`、`btnLangZh` / `btnLangEn`、`btnResetKeybinds`。
+
+分区创建入口：顶栏「分区」按钮，或快捷键 `Region`（默认 `Shift+R`），或在画布空白处按住 `Alt` 拖拽。
 
 **可打开的界面**：
 
@@ -340,8 +452,9 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 |---|---|---|
 | 节点属性模态框（标签/描述/颜色） | `App.openNodeModal(id)`，或双击节点 / 右键「属性」 | `modal`、`mLabel`、`mDesc`、`mTitle`、`mColors`、`mColorWheel`、`btnSaveModal`、`btnCloseModal` |
 | 自定义色轮选择器 | `App.openCustomPicker(cb, hex)`，或节点模态框内选自定义 | `cpModal`、`cpModalBox`、`gPanelWheel`、`btnCancelPicker`、`btnConfirmColor` |
-| 右键菜单 | `App.showCtx(x, y, nodeId, connId, target)` | `ctx` 及 `ctxProps/ctxEdit/ctxDup/ctxMirror/ctxResize/ctxResetSize/ctxCurveDrag/ctxResetCurve/ctxDel` |
-| 设置面板 | `App.showSettings()` | `settingsModal`、`settingsBtns`、`setSnapNodes`、`setSnapSize`、`genColorDropdown`、`genColorPanel`、`genColorTrigger`、`gColorDots` |
+| 右键菜单 | `App.showCtx(x, y, nodeId, connId, target)` | `ctx` 及 `ctxProps/ctxEdit/ctxDup/ctxMirror/ctxResize/ctxResetSize/ctxCurveDrag/ctxResetCurve/ctxDel`；分区上右键另有 `ctxRegionMove`、`ctxRegionResize` |
+| 设置面板 | `App.showSettings()` | `settingsModal`、`settingsBtns`、`setSnapNodes`、`setSnapSize`、`setSnapRegionPos`、`setSnapRegionSize`、`btnResetSnap`（重置对齐设置，调 `_resetSnapSettings()`）、`genColorDropdown`、`genColorPanel`、`genColorTrigger`、`gColorDots` |
+| 分区属性模态框（名称/颜色） | `App.openRegionModal(id)`，或分区上右键「属性」 | `regionModal`、`regionModalBox`、`rmLabel`、`rmColors`、`btnSaveRegionModal`、`btnCloseRegionModal` |
 | 节点标题/描述内联编辑 | `App.inlineEdit('nodeTitle'\|'nodeDesc', id)` | `inlineEdit`、`inlineInp`、`inlineTa` |
 | 描述编辑行 | `App._showDescEdit(nodeId)` | `descEdit`、`descEditTa` |
 | 坐标 HUD | 画布左下角 | `coord`、`coordX`、`coordY`、`coordZ` |
@@ -352,7 +465,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 
 ## 6. 常用示例
 
-**① 生成一张见简的流程图（思维导图风格）**
+**① 生成一张简明流程图（思维导图风格）**
 
 ```js
 weave.setData({
@@ -402,7 +515,7 @@ r.dataUrl
 App.centerCanvasOnNodes(); App.scale = 1.5; App.applyViewTransform();
 ```
 
-**⑥ 只读测评（切换只读 / 反复改后撤销）**
+**⑥ 只读模式与撤销/重做**
 
 ```js
 App.toggleReadOnly();       // 切只读
@@ -417,16 +530,30 @@ const id = App.canvasState.nodes[0]?.id;
 if (id) App.openNodeModal(id); // 用户可看到模态框并编辑
 ```
 
+**⑧ 给一组节点套分区并收起分支**
+
+```js
+(async () => {
+  const a = weave.addNode({ label: "模块", color: "blue", x: 0, y: 0 });
+  const b = weave.addNode({ label: "子项", color: "green", x: 300, y: 0 });
+  App.canvasState.connections.push(App._createConnection(a.id, b.id));
+  App.saveCanvasSnapshot(); App.renderCanvas();
+  weave.addRegion({ x: -80, y: -120, w: 900, h: 320, label: "分区", color: "cyan" });
+  const collapsed = weave.collapseNode(a.id);
+  return { collapsed };
+})()
+```
+
 ---
 
 ## 7. 注意事项与边界
 
 1. **执行环境**：代码在嵌入的 Weave iframe 内执行，只能访问该编辑器页面的全局（`App` / `Weave` / `weave` / `document` / `localStorage`）。不能访问 harness 外壳，不能 import/require 外部模块，也不具备 Node / shell 权限（那些是其他工具如 `write` / `pwsh` 的职责）。
 2. **入口是单个表达式**：需要多步时用 IIFE 包裹 —— `(() => { ...; return ... })()`，或 `(async () => {...})()` + `await`。
-3. **改完记得渲染**：直接改 `App.canvasState.nodes/connections` 后，调用 `App.saveCanvasSnapshot()`（产生撤销历史并持久化）+ `App.renderCanvas()`（刷新画面）。若只想持久化不想要历史步骤，用 `App.saveCanvas()`。
-4. **数据格式**：`weave.getData()` / `setData()` / `_serializeData()` 使用同一个文档格式（节点带 `id/label/desc/color/x/y/mirrored/w/h`，连线带 `id/from/to/label/cp1/cp2/mirrored`，外加 `viewport`）。该序列化格式里的 `x/y` 是网格单位（1 单位 = 20px），加载时自动换算回像素；而 `weave.addNode` / `App._addNodeAt` / 直接读写 `App.canvasState.nodes` 时 `x/y` 都是像素。把 `getData()` 读到的坐标用于 `weave.addNode()` 前先乘 20；`weave.addNode()` 省略 `w`/`h` 即为默认 170×80px 节点。布局时相邻节点中心距取横向约 15 格、纵向约 10 格，全部坐标控制在 ±50 格以内。
+3. **改完记得渲染**：直接改 `App.canvasState.nodes/connections/regions` 后，调用 `App.saveCanvasSnapshot()`（产生撤销历史并持久化）+ `App.renderCanvas()`（刷新画面）。若只想持久化不想要历史步骤，用 `App.saveCanvas()`。
+4. **数据格式**：`weave.getData()` / `setData()` / `_serializeData()` 使用同一个文档格式（节点带 `id/label/desc/color/x/y/mirrored/w/h` 及可选 `collapse`，连线带 `id/from/to/label/cp1/cp2/mirrored`，分区带 `id/label/color/x/y/w/h/nodeIds/parentId`，外加 `regions` 与 `viewport`）。该序列化格式里的 `x/y/w/h`（节点与分区）是网格单位（1 格 = 20px），加载时自动换算回像素；而 `weave.addNode` / `weave.addRegion` / `App._addNodeAt` / 直接读写 `App.canvasState.nodes` 时 `x/y` 都是像素。把 `getData()` 读到的坐标用于 `weave.addNode()` 前先乘 20；`weave.addNode()` 省略 `w`/`h` 即为默认 170×80px 节点。布局时相邻节点中心距取横向约 15 格、纵向约 10 格，全部坐标控制在 ±50 格以内。收起记录的 `dx`/`dy` 同为网格单位。
 5. **断开/切换视图无影响**：编辑器为离屏常驻实例，用户切到聊天页等任意页面时，`weave` 工具仍可操作同一份画布；改完切回 Weave 页即可看到。
-6. **清空**：`weave.setData({nodes:[],connections:[]})` 会清空全部内容并把撤销历史重置为新基线，是彻底清空的可信路径。`App.clearAllNodes()` 另带原生 `confirm()` 确认弹窗，离屏执行时可能被自动取消而无效，故优先用 `weave.setData()`。
+6. **清空**：`weave.setData({nodes:[],connections:[],regions:[]})` 会清空全部内容并把撤销历史重置为新基线。`App.clearAllNodes()` 会清空节点、连线与分区，另带原生 `confirm()` 确认弹窗，离屏执行时可能被自动取消而无效。
 
 ---
 

@@ -106,7 +106,10 @@ html,body{height:100vh;overflow:hidden;font-family:'Inter',-apple-system,BlinkMa
                        stroke-width 以属性写入 = 系数 × scale（2.5/3.5/4，见 _renderConnection）
           text.line-label — x/y/font-size 均已预缩放（缩放时重新渲染）
       .canvas-nodes — transform: scale(scale) → 缩放变化时重渲染以保证文字清晰
-        .node       — transform: translate(nodeX, nodeY) 世界坐标*/
+        .node-layer#nodeLayerMain — 普通节点（关联高亮时整体模糊）
+        svg#linesSvgHl — 关联高亮抬升层：坐标同 linesSvg，自身按 1/scale 反向缩放
+        .node-layer#nodeLayerHl  — 高亮节点（清晰，其连接点盖住连线）
+          .node     — transform: translate(nodeX, nodeY) 世界坐标*/
 
 .canvas{contain:layout style paint;position:relative;overflow:hidden;cursor:default;user-select:none;flex:1;min-height:0;background-color:#f8f9fb}
 #gridCvs{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0}
@@ -140,11 +143,61 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
 /*选中 / 悬停：仅加粗光晕——不改变 font-size。基础 font-size 以 SVG 属性（10 * scale）在 _doRenderLines 中设置，使标签随缩放同步（与节点文字一致）。此处的 CSS font-size 会覆盖该属性并破坏缩放联动（标签保持固定大小，而其他元素都在缩放）。*/
 .line-label.selected,
 .line-label.hover{stroke-width:2px}
+/*关联高亮（按住 Alt 单击节点）：被抬起的节点与其连线保持清晰，其余内容加轻微模糊。
+  半径为世界像素：节点层位于 scale 容器内，直接取该值；网格、连线与分区都在屏幕
+  像素空间（网格按像素绘制，连线/分区几何已预乘 scale），故乘 --hl-scale 折算。
+  --hl-scale 在高亮期间由 applyViewTransform 写入。
+  节点分两层：#nodeLayerMain 承载其余节点（整体一次模糊），#nodeLayerHl 承载被
+  抬起的节点（保持清晰）。两层都是 #canvasNodes 的子元素，节点事件仍由该元素上
+  的委托处理器接住。*/
+.canvas{--hl-blur:1.2px;--hl-scale:1}
+.canvas.hl-blur #gridCvs{filter:blur(calc(var(--hl-blur) * var(--hl-scale)))}
+.canvas.hl-blur #regionsSvg,
+.canvas.hl-blur #regionLabels{filter:blur(calc(var(--hl-blur) * var(--hl-scale)))}
+.canvas.hl-blur #linesSvg>.conn-group:not(.hl-lift){filter:blur(calc(var(--hl-blur) * var(--hl-scale)))}
+/*关联高亮抬升层：#canvasNodes 内的第三层，叠在非高亮节点层之上、高亮节点层之下，
+  使高亮连线盖过被模糊的节点，同时仍位于高亮节点的连接点之下。
+  其几何按 1/scale 反向缩放（applyViewTransform 写入），抵消父容器的 scale。*/
+.node-layer{position:absolute;top:0;left:0}
+#nodeLayerMain{z-index:1}
+#linesSvgHl{z-index:2;transform-origin:0 0}
+#nodeLayerHl{z-index:3}
+.canvas.hl-blur #nodeLayerMain{filter:blur(var(--hl-blur))}
+.node-layer{position:absolute;top:0;left:0}
 .coord{position:absolute;bottom:6px;left:6px;z-index:50;font-size:12.5px;color:var(--text-muted);background:var(--bg-card);padding:5px 9px;border-radius:4px;border:1px solid var(--border);font-family:'Inter',monospace;user-select:none;line-height:1.4;cursor:pointer}
 .coord .coord-val{display:inline;outline:none;user-select:text;cursor:text;border-radius:3px;padding:1px 3px;min-width:1em}
 .coord .coord-val:focus{background:transparent;border:1px solid var(--border);outline:1px solid rgba(59,130,246,.55);outline-offset:0;margin:-1px}
 .coord .coord-sep{color:var(--text-muted);user-select:none}
 .sel-overlay{position:absolute;border:2px dashed var(--accent);background:var(--accent-bg);pointer-events:none;z-index:100}
+/*分区（画框）可见矩形：位于 #canvasWorld 内（与连线同受平移/缩放变换），
+  矩形几何预乘 scale（同 lines-svg 的路径规则）。圆角实线边框 + 半透明填充，
+  点击/拖拽在 SVG 元素上。标签为左上角文字（灰字 + 白描边光晕，同连线标签
+  的浅色样式），无背景块。选中/调整态只加深加粗，不改线型。*/
+.regions-svg{position:absolute;top:0;left:0;overflow:visible;pointer-events:none}
+/*未选中分区按下 = 平移背景（与画布空白同语义），光标保持默认；
+  选中后可拖动移动，显示 move（与节点可拖态一致）。*/
+.regions-svg .region-rect{pointer-events:all;cursor:default}
+.regions-svg .region-rect.selected{cursor:move}
+/*分区标签 HTML 层：位于画布世界内（与连线同受平移变换），
+  元素本身以 translate 定位 + font-size 预乘 scale；双击进入
+  contenteditable 直接改字（同节点标题，无输入框浮层）。*/
+.region-labels{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;z-index:1}
+.region-labels .region-label{position:absolute;left:0;top:0;white-space:nowrap;line-height:1;
+  font-family:'Inter',sans-serif;font-weight:600;color:#4a5568;pointer-events:auto;cursor:move;
+  user-select:none;text-shadow:-1px 0 1px rgba(255,255,255,.95),1px 0 1px rgba(255,255,255,.95),0 1px 1px rgba(255,255,255,.95),0 -1px 1px rgba(255,255,255,.95)}
+.region-labels .region-label:hover{color:#1a1d24}
+.region-labels .region-label.editing{cursor:text;user-select:text;color:#1a1d24;outline:none;background:transparent;text-shadow:none}
+/*分区框调整大小手柄：与节点调整大小手柄（.rsz-handle）同款视觉——
+  白底 + accent 描边 + 圆角，尺寸随缩放（10*s 世界边长）。*/
+.regions-svg .region-rsz-handle{pointer-events:all;cursor:nwse-resize}
+.regions-svg .region-rsz-handle[data-dir="nw"],.regions-svg .region-rsz-handle[data-dir="se"]{cursor:nwse-resize}
+.regions-svg .region-rsz-handle[data-dir="ne"],.regions-svg .region-rsz-handle[data-dir="sw"]{cursor:nesw-resize}
+/*分区创建预览（屏幕坐标 overlay）：粗线 + 浅填充，与 .sel-overlay 的虚线框选区分。
+  颜色由 _applyRegionPreviewColor 按顶栏生成色以内联样式写入；此处为初始值。*/
+.region-preview{position:absolute;border:2px solid var(--accent);background:rgba(59,130,246,.07);pointer-events:none;z-index:100}
+/*分区创建模式（Region 键 / 顶栏按钮）下的画布光标提示*/
+.canvas.region-mode{cursor:crosshair}
+.canvas.region-mode.grabbing{cursor:default}
 .curve-overlay{position:absolute;top:0;left:0;overflow:visible;pointer-events:none;z-index:100}
 .canvas.drag-over{background:var(--accent-bg);outline:3px dashed var(--accent);outline-offset:-3px}
 .canvas.read-only{cursor:default}
@@ -215,22 +268,49 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
 .conn-arrow{pointer-events:none;stroke-linejoin:round}
 .conn-arrow.selected{filter:drop-shadow(0 0 4px rgba(59,130,246,.55))}
 
-.socket{position:absolute;width:16px;height:16px;border-radius:50%;background:var(--bg-card);border:2px solid;top:40px;transform:translateY(-50%);z-index:4;cursor:crosshair;transition:transform .15s,box-shadow .15s}
-
-.socket:hover{transform:translateY(-50%) scale(1.35);box-shadow:0 0 10px rgba(59,130,246,.35)}
-.socket.dragging{transform:translateY(-50%) scale(1.6);box-shadow:0 0 16px rgba(59,130,246,.5)}
-.socket.in{left:-8px}.socket.out{right:-8px}
+.socket{position:absolute;width:16px;height:16px;border-radius:50%;background:var(--bg-card);border:2px solid;top:calc(50% - 8px);transform-origin:center;box-sizing:border-box;z-index:4;cursor:default;transition:transform .15s,box-shadow .15s;will-change:transform}
+/*垂直定位说明：top:calc(50% - 8px)（8px = socket 高 16px 的一半）使 socket
+中心落在节点垂直中点，同时避免 translateY(-50%) 的亚像素定位——后者在真实
+GPU 渲染中会让圆环像素分布不均（下半部分/一侧多出抗锯齿像素，看起来偏椭
+圆）。hover/dragging 仅做 scale（围绕中心，中心不动），不再叠加位移。*/
+.socket:hover{transform:scale(1.35);box-shadow:0 0 10px rgba(59,130,246,.35)}
+.socket.dragging{transform:scale(1.6);box-shadow:0 0 16px rgba(59,130,246,.5)}
+.socket.in{left:-9px}.socket.out{right:-9px}
 /*镜像节点交换 socket：输入端在右，输出端在左。
-与基础规则同特异性——必须位于其后。*/
-.node.mirrored .socket.in{left:auto;right:-8px}
-.node.mirrored .socket.out{left:-8px;right:auto}
+与基础规则同特异性——必须位于其后。
+定位基准说明：left/right 偏移相对包含块（.node）的 padding box
+（border 内缘），而连线几何锚点（getSocketAnchor）相对 border box
+（node.x + w）。.node 有 1px border，因此 -8px（本意是让 socket
+中心对齐节点外缘）需再补偿 1px → -9px，否则 socket 中心相对几何
+锚点偏左 1px（Firefox 等浏览器中尤为明显）。*/
+.node.mirrored .socket.in{left:auto;right:-9px}
+.node.mirrored .socket.out{left:-9px;right:auto}
 .socket.s-blue{border-color:#3b82f6}.socket.s-cyan{border-color:#06b6d4}
 .socket.s-green{border-color:#10b981}.socket.s-yellow{border-color:#eab308}
 .socket.s-orange{border-color:#f97316}
-.socket-inner{width:8px;height:8px;border-radius:50%;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%)}
+.socket-inner{width:8px;height:8px;border-radius:50%;position:absolute;top:calc(50% - 4px);left:calc(50% - 4px)}
 .socket.s-blue .socket-inner{background:#3b82f6}.socket.s-cyan .socket-inner{background:#06b6d4}
 .socket.s-green .socket-inner{background:#10b981}.socket.s-yellow .socket-inner{background:#eab308}
 .socket.s-orange .socket-inner{background:#f97316}
+/*收起/展开徽标（socket-fold）：输出连接点的状态覆盖层——仅当可收起（−）
+   或已收起（+）时显示；普通输出连接点隐藏 fold、显示 socket-inner 圆点，
+   与输入连接点完全同构（同一个圆点，仅方向/定位不同）。
+   fold 与 inner 同位（top:calc(50% - 4px);left:calc(50% - 4px)，即
+   8px 元素以左上角定位在中心），显示时视觉上"替换"圆点。
+   SVG 线条用 stroke:currentColor 跟随节点色。
+   pointer-events:none 保证不干扰 socket 拖拽建线。*/
+.socket-fold{position:absolute;top:calc(50% - 4px);left:calc(50% - 4px);width:8px;height:8px;display:none;pointer-events:none;user-select:none}
+.socket-fold .fold-icon{width:8px;height:8px;display:block}
+.socket-fold .fold-icon line{stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.socket-fold .fold-v{display:none}
+.socket-fold.fold-plus .fold-v{display:block}
+.socket.out.fold-avail .socket-fold,.socket.out.fold-on .socket-fold{display:block}
+.socket.out.fold-avail .socket-inner,.socket.out.fold-on .socket-inner{display:none}
+/*hover-lock：_forceRerender 重插节点容器期间，浏览器会短暂清除 :hover（缩放时
+socket 反复缩小→放大的抽搐根源）。重插前给悬停中的 socket 加本类冻结视觉状态，
+下一帧浏览器重新命中测试后解除——视觉上无任何中断。与 :hover 规则同特异性，
+必须位于其后才能覆盖。*/
+.socket.hover-lock{transform:scale(1.35);box-shadow:0 0 10px rgba(59,130,246,.35)}
 
 #inlineEdit{position:fixed;z-index:500;display:none}
 #inlineEdit input{background:#fff;border:2px solid var(--accent);border-radius:6px;padding:4px 8px;font-size:11px;width:130px;outline:none;font-family:inherit;box-shadow:0 2px 8px rgba(0,0,0,.1)}
@@ -262,10 +342,10 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
 .modal-box button.p{background:var(--accent);color:#fff;border-color:var(--accent)}
 .modal-box button.p:hover{background:var(--accent-hover)}
 .modal-btns{display:flex;gap:8px;justify-content:flex-end}
-#modalBox label{display:block;font-size:10px;color:var(--text-muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px}
-#modalBox input,#modalBox textarea{width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text-primary);font-size:12px;margin-bottom:10px;font-family:inherit;outline:none;transition:.15s}
-#modalBox input:focus,#modalBox textarea:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px var(--accent-light)}
-#modalBox textarea{min-height:40px;resize:vertical}
+#modalBox label,#regionModalBox label{display:block;font-size:10px;color:var(--text-muted);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px}
+#modalBox input,#modalBox textarea,#regionModalBox input,#regionModalBox textarea{width:100%;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text-primary);font-size:12px;margin-bottom:10px;font-family:inherit;outline:none;transition:.15s}
+#modalBox input:focus,#modalBox textarea:focus,#regionModalBox input:focus,#regionModalBox textarea:focus{border-color:var(--accent);background:#fff;box-shadow:0 0 0 3px var(--accent-light)}
+#modalBox textarea,#regionModalBox textarea{min-height:40px;resize:vertical}
 
 .layout{display:flex;flex-direction:column;height:100vh}
 /*专注模式（Ctrl+H）：隐藏顶部工具栏与右侧边栏，使画布填满窗口。Flex 布局自动重新排布。*/
@@ -319,14 +399,17 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
 .switch input:checked + .track + .thumb{left:18px}
 
 /*── 弹窗颜色圆点 ──*/
-.m-dot{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;transition:transform .15s;flex-shrink:0}
-.m-dot:hover{transform:scale(1.15)}
-.m-dot.active{border-color:#1a1d24;box-shadow:0 0 0 2px var(--accent-light)}
-.m-wheel-btn{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);background:#fff;cursor:pointer;transition:transform .15s;overflow:hidden;position:relative;padding:0;flex-shrink:0}
-.m-wheel-btn:hover{transform:scale(1.15)}
-.m-wheel-btn::before{content:'';position:absolute;inset:-2px;border-radius:50%;background:conic-gradient(from 0deg,hsl(0,70%,75%),hsl(90,70%,75%),hsl(180,70%,75%),hsl(270,70%,75%),hsl(360,70%,75%))}
-.m-wheel-btn::after{content:'';position:absolute;inset:2px;border-radius:50%;background:#fff}
-.m-wheel-btn svg{position:absolute;inset:0;margin:auto;width:12px;height:12px;color:var(--text-muted)}
+/*选择器带 .modal-box 前缀：通用按钮规则 .modal-box button（圆角 6px + padding 5px 14px + 灰底）
+  特异性更高，会把色点/色轮按钮覆盖成"灰底圆角方块 + 中心椭圆球 + 外圈彩虹"的畸形样式；
+  提权后恢复 22px 正圆设计。*/
+.modal-box .m-dot{width:22px;height:22px;border-radius:50%;border:2px solid transparent;cursor:pointer;transition:transform .15s;flex-shrink:0;padding:0;background:transparent}
+.modal-box .m-dot:hover{transform:scale(1.15)}
+.modal-box .m-dot.active{border-color:#1a1d24;box-shadow:0 0 0 2px var(--accent-light)}
+.modal-box .m-wheel-btn{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);background:#fff;cursor:pointer;transition:transform .15s;overflow:hidden;position:relative;padding:0;flex-shrink:0}
+.modal-box .m-wheel-btn:hover{transform:scale(1.15)}
+.modal-box .m-wheel-btn::before{content:'';position:absolute;inset:-2px;border-radius:50%;background:conic-gradient(from 0deg,hsl(0,70%,75%),hsl(90,70%,75%),hsl(180,70%,75%),hsl(270,70%,75%),hsl(360,70%,75%))}
+.modal-box .m-wheel-btn::after{content:'';position:absolute;inset:2px;border-radius:50%;background:#fff}
+.modal-box .m-wheel-btn svg{position:absolute;inset:0;margin:auto;width:12px;height:12px;color:var(--text-muted)}
 
 /* ══ CSS 4 · 生成色下拉 ══ */
 /*── 生成节点颜色下拉框 ──*/
@@ -403,6 +486,8 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
       <button class="btn btn-secondary" id="btnAddNode" data-i18n="btn.addNode">+ 节点</button>
       <button class="btn btn-secondary" id="btnClearAllNodes" data-i18n="btn.clear" data-i18n-title="btn.clearTitle" title="清除所有节点">清空</button>
       <span class="sep"></span>
+      <button class="btn btn-secondary" id="btnRegion" data-i18n="btn.region" data-i18n-title="btn.regionTitle" title="画框分区（Shift+R，Alt+拖拽）">分区</button>
+      <span class="sep"></span>
       <button class="btn btn-secondary" id="btnDoExport" data-i18n="btn.export">导出</button>
       <button class="btn btn-secondary" id="btnDoImport" data-i18n="btn.import">导入</button>
       <span class="sep"></span>
@@ -439,6 +524,10 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
   <button id="ctxMirror" data-i18n="ctx.mirror">镜像节点</button>
   <div class="sep2" id="ctxSepMirror"></div>
   <button id="ctxProps" data-i18n="ctx.props">属性</button>
+  <div class="sep2" id="ctxSepRegion"></div>
+  <!-- 分区（画框）专属项：仅分区上右键时显示 -->
+  <button id="ctxRegionMove" data-i18n="ctx.regionMove">移动分区框</button>
+  <button id="ctxRegionResize" data-i18n="ctx.regionResize">调整分区框大小</button>
   <div class="sep2" id="ctxSep2"></div>
   <button id="ctxResize" data-i18n="ctx.resize">调整节点大小</button>
   <button id="ctxCurve" data-i18n="ctx.curve">调整连线曲线</button>
@@ -516,6 +605,23 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
           </div>
           <div class="setting-row">
             <div class="s-label">
+              <div class="s-title" data-i18n="set.snapRegionPos">分区位置对齐网格</div>
+              <div class="s-desc" data-i18n="set.snapRegionPosDesc">分区框位置对齐到网格；关闭后自由摆放</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="setSnapRegionPos"><span class="track"></span><span class="thumb"></span></label>
+          </div>
+          <div class="setting-row">
+            <div class="s-label">
+              <div class="s-title" data-i18n="set.snapRegionSize">分区大小对齐网格</div>
+              <div class="s-desc" data-i18n="set.snapRegionSizeDesc">分区框大小对齐到网格；关闭后自由调整</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="setSnapRegionSize"><span class="track"></span><span class="thumb"></span></label>
+          </div>
+          <div class="set-reset">
+            <button class="btn btn-secondary" id="btnResetSnap" data-i18n="set.resetSnap">重置对齐设置</button>
+          </div>
+          <div class="setting-row">
+            <div class="s-label">
               <div class="s-title" data-i18n="set.language">语言</div>
               <div class="s-desc" data-i18n="set.languageDesc">界面显示语言</div>
             </div>
@@ -534,6 +640,7 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
             <div class="key-row"><span class="key-desc" data-i18n="set.dblTitle">编辑文字</span><span class="key-value" data-i18n="set.kv.dblTitle">双击标题</span></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.ctxMenu">节点更多操作</span><span class="key-value" data-i18n="set.kv.ctxMenu">右键</span></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.box">框选多个节点</span><span class="key-value" data-i18n="set.kv.box">Shift + 拖拽</span></div>
+            <div class="key-row"><span class="key-desc" data-i18n="set.region">框出一个区域</span><span class="key-value" data-i18n="set.kv.region">画分区 / Alt + 拖拽</span></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.middle">无交互移动画布</span><span class="key-value" data-i18n="set.kv.middle">中键拖拽 / 长按中键</span></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.wheel">缩放画布</span><span class="key-value" data-i18n="set.kv.wheel">滚轮</span></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.colorCycle">切换节点颜色</span><span class="key-value" data-i18n="set.kv.colorCycle">Ctrl + 滚轮</span></div>
@@ -545,6 +652,8 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
             <div class="key-row"><span class="key-desc" data-i18n="set.paste">粘贴</span><input class="help-key" type="text" data-kb="paste" value="Ctrl+V" readonly></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.autoModal">新建自动打开详情</span><input class="help-key" type="text" data-kb="autoModal" value="Ctrl+E" readonly></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.chrome">隐藏 / 显示界面</span><input class="help-key" type="text" data-kb="chrome" value="Ctrl+H" readonly></div>
+            <div class="key-row"><span class="key-desc" data-i18n="set.region">画分区</span><input class="help-key" type="text" data-kb="region" value="Shift+R" readonly></div>
+            <div class="key-row"><span class="key-desc" data-i18n="set.hlNode">高亮关联节点</span><input class="help-key" type="text" data-kb="hlNode" value="Alt" readonly></div>
             <div class="key-row"><span class="key-desc" data-i18n="set.delKey">删除选中</span><input class="help-key" type="text" data-kb="delete" value="Delete" readonly></div>
             <div class="set-reset"><button class="btn btn-secondary" id="btnResetKeybinds" data-i18n="set.resetKeys">重置键位</button></div>
           </div>
@@ -553,7 +662,7 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
           <div class="about-content">
             <div class="about-icon" id="aboutSigma" role="button" tabindex="0" data-i18n-title="about.sigmaTip" title="千万不要点"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M 16.69 5.44 L 7.31 5.44 L 12 12 L 7.31 18.56 L 16.69 18.56"/></svg></div>
             <div class="about-row"><label data-i18n="about.appName">软件名称</label><span>Weave</span></div>
-            <div class="about-row"><label data-i18n="about.version">版本号</label><span>v1.1.1</span></div>
+            <div class="about-row"><label data-i18n="about.version">版本号</label><span>v1.3</span></div>
             <div class="about-row"><label data-i18n="about.projectUrl">项目地址</label><a href="https://github.com/Quan-Chan/Weave" target="_blank">https://github.com/Quan-Chan/Weave</a></div>
             <div class="about-row"><label data-i18n="about.devHome">开发者主页</label><a href="https://github.com/Quan-Chan" target="_blank">https://github.com/Quan-Chan</a></div>
           </div>
@@ -566,7 +675,22 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
   </div>
 </div>
 
-<!-- ══ HTML 5 · Toast 通知 ══ -->
+<!-- ══ HTML 5 · 分区属性弹窗（画框分区）══ -->
+<div id="regionModal" class="modal-overlay">
+  <div id="regionModalBox" class="modal-box">
+    <h3 data-i18n="modal.regionTitle">编辑分区</h3>
+    <label data-i18n="modal.regionLabel">分区名称</label>
+    <input id="rmLabel" spellcheck="false">
+    <label data-i18n="modal.regionColor">分区颜色</label>
+    <div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap;align-items:center" id="rmColors"></div>
+    <div class="modal-btns">
+      <button id="btnCloseRegionModal" data-i18n="modal.cancel">取消</button>
+      <button class="p" id="btnSaveRegionModal" data-i18n="modal.save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ HTML 6 · Toast 通知 ══ -->
 <div class="toast-container" id="toastContainer"></div>
 
 
@@ -585,17 +709,41 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
      M06 渲染·连线      —— 贝塞尔几何、箭头、SVG 渲染、空间索引、增量平移
      M07 动画           —— 网格吸附动画（240Hz 数据流 + rAF 渲染流）
      M08 输入手势       —— 节点拖/线拖/框选/平移/滚轮/单击双击/键位映射
-     M09 节点编辑       —— CRUD、剪贴板、内联编辑、描述浮层、详情弹窗、上下文菜单动作
+     M09 节点编辑       —— CRUD、剪贴板、内联编辑、描述浮层、详情弹窗、上下文菜单动作、收起/展开节点串
      M10 连线编辑       —— 创建/删除、曲线手柄、标签编辑、选择维护
      M11 UI 外壳        —— 右键菜单、关于/设置弹窗、键位录制、专注模式、状态徽标
      M12 导入导出       —— JSON 导入导出、PNG 导出（DOM 快照 + legacy 双通道）
      M13 装配与启动     —— 全局事件监听、快捷键、Init 初始化
 
+    画框分区（region）
+     - 交互入口：顶栏 分区 按钮 / Region 键（默认 Shift+R）/ Alt+左键拖拽（画布空白处）
+     - 新建时包含框内节点，并把它们选中；分区属性（名称/颜色）经右键菜单与弹窗编辑
+     - 分区渲染 = SVG rect（随画布变换），坐标 x/y/w/h 均为世界像素，序列化同节点规则
+
    数据模型
-     canvasState = { nodes[], connections[], history[] }
-     node      = { id, label, desc, color, x, y, w, h, mirrored? }
+     canvasState = { nodes[], connections[], regions[], history[] }
+     node      = { id, label, desc, color, x, y, w, h, mirrored?, collapse? }
      conn      = { id, from, to, label, cp1?, cp2?, mirrored? }
-       注意：内存中 x/y/w/h 均为世界像素；存档时 x/y 转为网格单位（1px=1/GRID_PX），w/h 仍为 px。
+       注意：内存中 x/y/w/h 均为世界像素；序列化存档的 x/y/w/h（节点与
+       分区）与 collapse.dx/dy 统一为“格”单位（1px = 1/GRID_PX），加载时
+       整体乘回像素。用户视角恒为格；系统内部一次换算后全为像素。
+     region    = { id, label, color, x, y, w, h, nodeIds, parentId }（可选，画框分区）
+       - 分区是文档中的可见矩形：SVG 圆角矩形 + 顶部标签，位于连线层之下
+       - 分区内的节点由显式成员表 region.nodeIds 定义（本分区直属节点），
+         parentId 记录父分区（null = 顶级）。节点拖入/拖出、新建/克隆/粘贴
+         落入分区时自动维护该表（_syncNodeRegionMembership，按节点中心点
+         命中的最深分区归属，树形单归属）
+       - 移动分区时随动的节点 = 本分区及全部后代分区的 nodeIds 并集
+         （_regionAllNodeIds）；随动的连线 = 至少一端节点随动的连线
+       - 删除分区仅移除框体与 nodeIds，框内节点保留，子分区上提到父级
+     collapse  = { hidden: [{id, dx, dy}, ...] }（可选，仅收起根携带）
+       - dx/dy = 收起瞬间各隐藏节点相对根节点的偏移（内存为像素；序列化时
+          与 x/y 同规则折算为格单位；相对位置保存，
+         根节点移动后展开仍按 root + 偏移恢复正确相对位置）
+       - 嵌套收起：外层根的闭包一并收下内层根节点；内层根 collapse 记录
+         原样保留（展开外层不展开内层）
+       - 不变量：收起闭包内任一节点被 ≥2 个节点连接时禁止收起（否则会
+         凭空吞掉其他父节点的连线并误藏与根齐平的节点）
 
    三大约定（魔改前必读）
      1. 下划线前缀 = App 内部状态/方法；渲染键 = conn.id（非 from|to 配对键）
@@ -606,6 +754,7 @@ stroke-width 过渡：缩放时它会让线宽滞后于几何 150ms 造成粗细
 
    关键不变式
       - 扇形偏移缓存 _connOffsCache 在 saveCanvasSnapshot / _restoreCanvasSnapshot 失效
+      - 收起派生缓存 _collapseDerived（隐藏并集 + 徽标可用性）与 _connOffsCache 同失效时机
       - 一次性 click 守卫：_boxSelectJustCompleted / _suppressNextCanvasClick / _dragJustFinished
         在 _onCanvasClick 顶部按序消费，语义互不相同（框选后 / 内联拖选后 / 节点拖拽后）
       - 拖拽预览把鼠标光标虚拟为配对连接点（与真实节点同构），复用永久连线几何
@@ -642,6 +791,8 @@ const NODE_DEFAULT_W = 170;
 const NODE_DEFAULT_H = 80;
 const NODE_W = NODE_DEFAULT_W;
 const NODE_H = NODE_DEFAULT_H;
+//已弃用：socket 垂直锚点改为节点高度中心（getSocketAnchor 用 h/2），
+//不再依赖固定偏移。保留定义以防外部存档/脚本引用。
 const SOCKET_Y = 40;
 /*调整大小时统一节点的最小尺寸（世界像素）。*/
 const NODE_MIN_W = 120;
@@ -657,10 +808,15 @@ const CONN_OFFSET_STEP = 14;
 //缩放（0.15x/5x）下命中区域会过小/过大，但用户很少
 //在这些级别下建立连线。
 const SOCKET_HIT_RADIUS = 14;
+//socket 点击判定阈值（屏幕像素）：mousedown→mouseup 位移 ≤ 该值视为"点击"，
+//在输出连接点上触发收起/展开切换；超过该值按拖拽建线处理（历史行为）。
+const SOCKET_CLICK_TOLERANCE = 4;
 
 const WORLD_CENTER_X = 0;
 const WORLD_CENTER_Y = 0;
 const START_Y = WORLD_CENTER_Y - 60;
+//分区标签字号（世界像素，渲染时预乘 scale）。
+const REGION_LABEL_FONT = 12.5;
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const GRID_MINOR_COLOR = 'rgba(200,204,213,0.35)';
@@ -694,12 +850,15 @@ const I18N = {
     'btn.clearTitle': '清除所有节点',
     'btn.exportPng': '导出PNG', 'btn.readonly': '只读模式', 'btn.settings': '设置',
     'btn.colorGen': '选择生成节点颜色', 'btn.colorWheel': '自选颜色', 'btn.color': '颜色',
+    'btn.region': '分区', 'btn.regionTitle': '画框分区（Shift+R，Alt+拖拽）',
     // 右键菜单
     'ctx.edit': '编辑', 'ctx.dup': '复制', 'ctx.mirror': '镜像节点', 'ctx.props': '属性',
     'ctx.resize': '调整节点大小', 'ctx.curve': '调整连线曲线', 'ctx.resetCurve': '重置曲线控制点',
     'ctx.resetSize': '重置节点大小', 'ctx.del': '删除',
+    'ctx.regionMove': '移动分区框', 'ctx.regionResize': '调整分区框大小',
     // 节点详情弹窗
     'modal.editTitle': '编辑节点', 'modal.label': '标签', 'modal.desc': '描述', 'modal.color': '颜色',
+    'modal.regionTitle': '编辑分区', 'modal.regionLabel': '分区名称', 'modal.regionColor': '分区颜色',
     'modal.cancel': '取消', 'modal.save': '保存', 'modal.customColor': '自选颜色', 'modal.confirm': '确认',
     // 关于 / 快速入门
     'about.appName': '软件名称', 'about.version': '版本号',
@@ -707,6 +866,8 @@ const I18N = {
     // 设置
     'set.title': '设置', 'set.snapNodes': '对齐节点', 'set.snapNodesDesc': '节点位置对齐到网格；关闭后自由摆放',
     'set.snapSize': '节点大小对齐', 'set.snapSizeDesc': '节点大小对齐到网格；关闭后自由调整',
+    'set.snapRegionPos': '分区位置对齐网格', 'set.snapRegionPosDesc': '分区框位置对齐到网格；关闭后自由摆放',
+    'set.snapRegionSize': '分区大小对齐网格', 'set.snapRegionSizeDesc': '分区框大小对齐到网格；关闭后自由调整',
     'set.language': '语言', 'set.languageDesc': '界面显示语言', 'set.close': '关闭',
     // 设置 · 键位设置
     'set.generalTitle': '常规',
@@ -716,16 +877,20 @@ const I18N = {
     'set.kv.dblclick': '双击空白处', 'set.kv.dragNode': '左键拖拽',
     'set.kv.socket': '拖拽节点连接点', 'set.kv.dblTitle': '双击标题',
     'set.kv.ctxMenu': '右键', 'set.kv.box': 'Shift + 拖拽',
+    'set.kv.region': '画分区 / Alt + 拖拽',
+    'set.kv.hlNode': '按住 Alt + 点击节点',
     'set.kv.middle': '长按中键拖拽', 'set.kv.wheel': '滚轮', 'set.kv.colorCycle': 'Ctrl + 滚轮',
     'set.dblclick': '生成新节点', 'set.dragNode': '移动节点',
     'set.socket': '创建连线', 'set.dblTitle': '编辑文字',
     'set.ctxMenu': '节点更多操作', 'set.box': '框选多个节点',
+    'set.region': '框出一个区域',
+    'set.hlNode': '高亮关联节点',
     'set.middle': '无交互移动画布',
     'set.wheel': '缩放画布', 'set.colorCycle': '切换节点颜色',
     'set.undo': '撤销', 'set.redo': '重做', 'set.selectAll': '全选',
     'set.copy': '复制', 'set.paste': '粘贴', 'set.autoModal': '新建自动打开详情',
     'set.chrome': '隐藏 / 显示界面', 'set.delKey': '删除选中',
-    'set.resetKeys': '重置键位',
+    'set.resetKeys': '重置键位', 'set.resetSnap': '重置对齐设置',
     // 通知（toast）
     'toast.readonlyUndo': '只读模式无法撤销', 'toast.noUndo': '没有可撤销的操作', 'toast.undone': '已撤销',
     'toast.readonlyRedo': '只读模式无法重做', 'toast.noRedo': '没有可重做的操作', 'toast.redone': '已重做',
@@ -738,6 +903,8 @@ const I18N = {
     'toast.nodeDeleted': '节点已删除', 'toast.nodesDeleted': '已删除 {n} 个节点',
     'toast.connDeleted': '连线已删除', 'toast.connsDeleted': '已删除 {n} 条连线',
     'toast.sizeReset': '已重置节点大小', 'toast.parseFailed': '解析失败: {msg}',
+    'toast.regionCreated': '已创建分区', 'toast.regionDeleted': '分区已删除',
+    'toast.regionModeOn': '分区模式已开启：拖拽画布空白处画分区', 'toast.regionModeOff': '分区模式已关闭',
     'toast.noData': '无数据可导出', 'toast.exported': '已导出',
     'toast.compatMode': '当前浏览器不支持 DOM 快照导出，已切换至兼容模式',
     'toast.tooBig': '画布过大，无法导出', 'toast.hugeExport': '超大图导出，可能需要一些时间',
@@ -748,9 +915,10 @@ const I18N = {
     'toast.readonlyOn': '已切换至只读模式', 'toast.readonlyOff': '已切换至编辑模式',
     'toast.chromeHidden': '已隐藏界面（Ctrl+H 恢复）', 'toast.chromeShown': '已显示界面',
     'toast.keybindSaved': '快捷键已更新', 'toast.keybindConflict': '该快捷键已被其他操作使用',
-    'toast.keysReset': '键位已重置为默认',
+    'toast.modOnlyHlNode': '纯修饰键仅支持"高亮关联节点"手势动作',
+    'toast.keysReset': '键位已重置为默认', 'toast.snapReset': '对齐设置已重置为默认',
     // 其他
-    'misc.newNode': '新节点', 'misc.statusBadge': '{nodes} 节点 · {conns} 连线',
+    'misc.newNode': '新节点', 'misc.region': '分区', 'misc.statusBadge': '{nodes} 节点 · {conns} 连线',
     'misc.color.blue': '蓝色', 'misc.color.cyan': '青色', 'misc.color.green': '绿色',
     'misc.color.yellow': '黄色', 'misc.color.orange': '橙色',
     // Σ 彩蛋（startEasterEgg）
@@ -763,16 +931,22 @@ const I18N = {
     'btn.clearTitle': 'Clear all nodes',
     'btn.exportPng': 'Export PNG', 'btn.readonly': 'Read-only', 'btn.settings': 'Settings',
     'btn.colorGen': 'Color for new nodes', 'btn.colorWheel': 'Custom color', 'btn.color': 'Color',
+    'btn.region': 'Region', 'btn.regionTitle': 'Draw a region (Shift+R, Alt+drag)',
+    // 右键菜单
     'ctx.edit': 'Edit', 'ctx.dup': 'Duplicate', 'ctx.mirror': 'Mirror node', 'ctx.props': 'Properties',
     'ctx.resize': 'Resize node', 'ctx.curve': 'Adjust curve', 'ctx.resetCurve': 'Reset control points',
     'ctx.resetSize': 'Reset size', 'ctx.del': 'Delete',
+    'ctx.regionMove': 'Move region frame', 'ctx.regionResize': 'Resize region frame',
     'modal.editTitle': 'Edit node', 'modal.label': 'Label', 'modal.desc': 'Description', 'modal.color': 'Color',
+    'modal.regionTitle': 'Edit region', 'modal.regionLabel': 'Region name', 'modal.regionColor': 'Region color',
     'modal.cancel': 'Cancel', 'modal.save': 'Save', 'modal.customColor': 'Custom color', 'modal.confirm': 'OK',
     'about.appName': 'Name', 'about.version': 'Version',
     'about.projectUrl': 'Project', 'about.devHome': 'Developer', 'about.sigmaTip': 'Do NOT click',
     'set.title': 'Settings', 'set.snapNodes': 'Snap nodes',
     'set.snapNodesDesc': 'Snap node positions to the grid; off for free placement',
     'set.snapSize': 'Snap size', 'set.snapSizeDesc': 'Snap node sizes to the grid; off for free resizing',
+    'set.snapRegionPos': 'Snap region position', 'set.snapRegionPosDesc': 'Snap region frame positions to the grid; off for free placement',
+    'set.snapRegionSize': 'Snap region size', 'set.snapRegionSizeDesc': 'Snap region frame sizes to the grid; off for free resizing',
     'set.language': 'Language', 'set.languageDesc': 'UI language', 'set.close': 'Close',
     // 设置 · 键位设置
     'set.generalTitle': 'General',
@@ -782,16 +956,20 @@ const I18N = {
     'set.kv.dblclick': 'Double-click', 'set.kv.dragNode': 'Left-drag',
     'set.kv.socket': 'Drag a node connection point', 'set.kv.dblTitle': 'Double-click title',
     'set.kv.ctxMenu': 'Right-click', 'set.kv.box': 'Shift + drag',
+    'set.kv.region': 'Draw region / Alt + drag',
+    'set.kv.hlNode': 'Hold Alt + click a node',
     'set.kv.middle': 'Hold & drag with middle button', 'set.kv.wheel': 'Wheel', 'set.kv.colorCycle': 'Ctrl + wheel',
     'set.dblclick': 'to create a node', 'set.dragNode': 'to move it',
     'set.socket': 'to create a connection', 'set.dblTitle': 'to edit text',
     'set.ctxMenu': 'more actions for a node', 'set.box': 'to box-select nodes',
+    'set.region': 'to draw a region',
+    'set.hlNode': 'to highlight linked nodes',
     'set.middle': 'to pan without interacting',
     'set.wheel': 'to zoom', 'set.colorCycle': 'to cycle node colors',
     'set.undo': 'Undo', 'set.redo': 'Redo', 'set.selectAll': 'Select all',
     'set.copy': 'Copy', 'set.paste': 'Paste', 'set.autoModal': 'Auto-open details for new nodes',
     'set.chrome': 'Toggle UI chrome', 'set.delKey': 'Delete selection',
-    'set.resetKeys': 'Reset keybindings',
+    'set.resetKeys': 'Reset keybindings', 'set.resetSnap': 'Reset alignment settings',
     'toast.readonlyUndo': 'Cannot undo in read-only mode', 'toast.noUndo': 'Nothing to undo', 'toast.undone': 'Undone',
     'toast.readonlyRedo': 'Cannot redo in read-only mode', 'toast.noRedo': 'Nothing to redo', 'toast.redone': 'Redone',
     'toast.invalidFile': 'Invalid save file', 'toast.importOk': 'Imported successfully',
@@ -803,6 +981,8 @@ const I18N = {
     'toast.nodeDeleted': 'Node deleted', 'toast.nodesDeleted': 'Deleted {n} node(s)',
     'toast.connDeleted': 'Connection deleted', 'toast.connsDeleted': 'Deleted {n} connection(s)',
     'toast.sizeReset': 'Node size reset', 'toast.parseFailed': 'Parse failed: {msg}',
+    'toast.regionCreated': 'Region created', 'toast.regionDeleted': 'Region deleted',
+    'toast.regionModeOn': 'Region mode on: drag empty canvas to draw', 'toast.regionModeOff': 'Region mode off',
     'toast.noData': 'Nothing to export', 'toast.exported': 'Exported',
     'toast.compatMode': 'DOM snapshot export unsupported — switched to compatibility mode',
     'toast.tooBig': 'Canvas too large to export', 'toast.hugeExport': 'Very large export — this may take a while',
@@ -813,8 +993,9 @@ const I18N = {
     'toast.readonlyOn': 'Read-only mode on', 'toast.readonlyOff': 'Edit mode on',
     'toast.chromeHidden': 'UI hidden (Ctrl+H to restore)', 'toast.chromeShown': 'UI shown',
     'toast.keybindSaved': 'Shortcut updated', 'toast.keybindConflict': 'Shortcut already in use by another action',
-    'toast.keysReset': 'Keybindings reset to defaults',
-    'misc.newNode': 'New node', 'misc.statusBadge': '{nodes} nodes · {conns} connections',
+    'toast.modOnlyHlNode': 'Modifier-only keys are only supported for "highlight linked nodes"',
+    'toast.keysReset': 'Keybindings reset to defaults', 'toast.snapReset': 'Alignment settings reset to defaults',
+    'misc.newNode': 'New node', 'misc.region': 'Region', 'misc.statusBadge': '{nodes} nodes · {conns} connections',
     'misc.color.blue': 'Blue', 'misc.color.cyan': 'Cyan', 'misc.color.green': 'Green',
     'misc.color.yellow': 'Yellow', 'misc.color.orange': 'Orange',
     'egg.hint': 'Click me', 'egg.toast': 'Σ spit out a node!', 'egg.desc': 'A node spat out by Σ'
@@ -1087,6 +1268,14 @@ Weave.Geom = {
       rx: Math.max(sx, cx), ry: Math.max(sy, cy)
     };
   },
+  //矩形包含关系：整矩形（bx,by,bw,bh）位于（lx,ly,rx,ry）之内（含边界）。
+  rectContains(lx, ly, rx, ry, bx, by, bw, bh) {
+    return bx >= lx && bx + bw <= rx && by >= ly && by + bh <= ry;
+  },
+  //矩形相交：仅擦边不算相交（与连线命中判定区分）。
+  rectsIntersect(lx, ly, rx, ry, bx, by, bw, bh) {
+    return bx < rx && bx + bw > lx && by < ry && by + bh > ly;
+  },
   //节点集合的包围盒（世界坐标）。`rectOf(n)` 返回节点的
   //{x, y, w, h}——由调用方注入，避免本函数与 App 几何耦合。
   nodesBBox(nodes, rectOf) {
@@ -1104,9 +1293,13 @@ Weave.Geom = {
   /* ── 连线几何（从 App 提取的纯函数） ── */
   getSocketAnchor(node, side) {
     const w = node.w || NODE_W;
+    //socket 始终锚定在节点高度的垂直中心（而非固定偏移 SOCKET_Y）：
+    //节点被调整大小后，固定偏移会导致 socket 偏离节点中线（Firefox
+    //等无亚像素掩盖的浏览器中尤为明显）。默认 80px 节点 h/2=40 与原值一致。
+    const h = node.h || NODE_DEFAULT_H;
     return {
       x: (node.x || 0) + (side === 'out' ? (node.mirrored ? 0 : w) : (node.mirrored ? w : 0)),
-      y: (node.y || 0) + SOCKET_Y
+      y: (node.y || 0) + h / 2
     };
   },
   //三次贝塞尔在 t=0.5 处的真实中点：B(0.5) = (P0+3P1+3P2+P3)/8，
@@ -1159,6 +1352,78 @@ Weave.Geom = {
   connOffYFromIdx(idx) {
     if (idx === 0) return 0;
     return (idx % 2 === 0 ? 1 : -1) * Math.ceil(idx / 2) * CONN_OFFSET_STEP;
+  },
+
+  /* ── 收起/展开几何（节点串闭包，M09/M02 共用） ── */
+  //沿连线方向（from → to）收集根节点之后全部可达节点的闭包（不含根自身）。
+  //连接只用 from/to 字段，不校验节点存在性——由调用方保证数据一致
+  //（_validateLoadedData / removeNodes 已维护）；避免依赖 App 环境使本
+  //函数成为纯工具（可按需求复用）。
+  collapseClosure(connections, rootId) {
+    const out = [];
+    const seen = new Set([rootId]);
+    const queue = [rootId];
+    while (queue.length) {
+      const cur = queue.shift();
+      for (const conn of connections) {
+        if (conn.from !== cur) continue;
+        if (seen.has(conn.to)) continue;
+        seen.add(conn.to);
+        out.push(conn.to);
+        queue.push(conn.to);
+      }
+    }
+    return out;
+  },
+  //多父冲突检测：闭包中是否存在被 ≥2 个不同节点连接的节点。
+  //按"节点"计——来自同一节点的平行连线只算一个父节点。
+  //（用途见 M09 _canToggleCollapse/collapseChain 的不变量说明。）
+  hasMultiParentConflict(connections, closureIds) {
+    if (!closureIds.length) return false;
+    const set = new Set(closureIds);
+    const parentCount = new Map();   //toId → Set(fromId)
+    for (const c of connections) {
+      if (!set.has(c.to)) continue;
+      let ps = parentCount.get(c.to);
+      if (!ps) { ps = new Set(); parentCount.set(c.to, ps); }
+      ps.add(c.from);
+    }
+    for (const ps of parentCount.values()) if (ps.size >= 2) return true;
+    return false;
+  },
+  //过冲吸附帧序列：从 0 平移到 (dx, dy) 的位移帧数组（含起点与末帧）。
+  //时序：baseMs 线性滑动 + tailMs 过冲尾段（峰值在尾段中点，超出 15% 后回落），
+  //1ms 采样（150 帧 ≈ 2.4KB）。位移帧语义：调用方把帧值加到各自起点坐标。
+  snapFrames(dx, dy) {
+    const baseMs = 100, tailMs = 50, totalMs = baseMs + tailMs;
+    const sampleStepMs = 1;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+    const ux = dx / dist, uy = dy / dist;
+    const overshootAmount = 0.15;
+    const peakX = dx + ux * dist * overshootAmount;
+    const peakY = dy + uy * dist * overshootAmount;
+    const peakRatio = 0.5;
+    const frames = [];
+    for (let tMs = 0; tMs <= totalMs; tMs += sampleStepMs) {
+      let x, y;
+      if (tMs < baseMs) {
+        const t = tMs / baseMs;
+        x = dx * t; y = dy * t;
+      } else if (tMs < totalMs) {
+        const tailT = (tMs - baseMs) / tailMs;
+        if (tailT <= peakRatio) {
+          const t = tailT / peakRatio;
+          x = dx + (peakX - dx) * t; y = dy + (peakY - dy) * t;
+        } else {
+          const t = (tailT - peakRatio) / (1 - peakRatio);
+          x = peakX + (dx - peakX) * t; y = peakY + (dy - peakY) * t;
+        }
+      } else {
+        x = dx; y = dy;
+      }
+      frames.push({ x, y });
+    }
+    return frames;
   },
 
   /* ── 节点几何（唯一事实来源，M05 曾重复定义） ── */
@@ -1257,7 +1522,7 @@ Weave.Geom = {
    ────────────────────────────────────────────────────────────────── */
 
 const App = window.App = {
-  canvasState: { nodes: [], connections: [], history: [] },
+  canvasState: { nodes: [], connections: [], regions: [], history: [] },
   // ── 指向性手势状态 ──
   // 节点拖 / socket 拖 / 框选 / 平移 / 曲线手柄共享同一输入通道（mousedown
   // 分发 + _bindDragListeners），不变式：任一时刻至多一个"主导"手势活跃。
@@ -1271,6 +1536,33 @@ const App = window.App = {
   selectedNodeIds: new Set(),
   canvasPanState: null,
   canvasBoxState: null,
+  //分区创建拖拽的进行中矩形（世界坐标），见 M08。alt 拖拽与按键模式共用。
+  regionDragState: null,
+  //分区移动拖拽状态（世界坐标），见 M08。regions 通过数据移动 + DOM 重定位。
+  regionMoveState: null,
+  //点击分区后单选（M11），保持与节点/连线一致的交互对称。
+  selectedRegionId: null,
+  //分区创建模式：Region 键切换。开启时画布空白处左键拖拽 = 画分区
+  //（Alt+左键在任意状态下等效）。瞬态状态，不随存档保存。
+  _regionModeActive: false,
+  //分区创建结束后置 1 个 tick：随后的画布单击不得清除刚选中的节点。
+  _regionJustCreated: false,
+  //未选中分区上按下放行给画布平移时：发生过实际位移（拖动背景）→ true，
+  //rect 的 click 据此刻略选中（拖动平移不应选中分区）。单击消费清除。
+  _regionPanMoved: false,
+  //双击分区建节点后置位：随后的浏览器 click（双击的第二击）不得选中分区。
+  _regionDblCreated: false,
+  //分区矩形 / 标签的手工双击判定（mousedown 记时，与节点标题 _dblClickTarget 同规则）。
+  _regionDblRect: null,
+  _regionDblLabel: null,
+  //分区标签 contenteditable 编辑会话中的标签元素引用（M06/M13 共享）。
+  //编辑期间画布单击 / 全局 mouseup 守卫据此保护会话；null = 无活动会话。
+  _regionEditEl: null,
+  //"移动分区框"模式中的分区 id：模式内按住分区拖动仅移动框体（节点不随动），
+  //直到空白单击 / Escape 退出。与调整分区框大小模式对称。
+  _frameMoveRegionId: null,
+  //调整分区框大小模式中的分区 id（显示四角手柄；Escape/空白单击退出）。
+  _regionResizeId: null,
   //框选结束后置 1 个 tick；浏览器随后触发的
   //单击不得清除刚选中的节点。
   _boxSelectJustCompleted: false,
@@ -1290,6 +1582,8 @@ const App = window.App = {
   _resolveColorCache: null,
   _forceRerenderPending: false,
   _modalNodeId: null,
+  /*分区（region）属性弹窗的瞬态状态（弹窗打开期间设置）*/
+  _regionModalId: null,
   _inlineEditTarget: null,
   //当前激活的 contenteditable 内联会话的拆除闭包（见
   //_enterNodeInlineEdit / closeInlineEdit）。
@@ -1302,6 +1596,7 @@ const App = window.App = {
   _chromeHidden: false,
   _ctxNodeId: null,
   _ctxConnId: null,
+  _ctxRegionId: null,
   _ctxEditTarget: 'title',
   //当前选中的连线 id（Set）。多选：框选会选中
   //所有曲线穿过框的连线；单击点击一条
@@ -1320,14 +1615,19 @@ const App = window.App = {
   readOnly: false,
   _autoOpenModal: false,
   /*设置（持久化到 localStorage）：
-    _snapNodes —— 拖拽/添加时节点位置吸附到 20px 网格
-      （默认开 = 历史行为）。关闭时位置保持
+    4 个对齐设置默认全部开启（常规页提供"重置对齐设置"一键恢复开启）。
+    _snapNodes —— 拖拽/添加时节点位置吸附到 20px 网格。关闭时位置保持
       像素精度（最小 1px = 1/20 网格单位）。
-    _snapSize —— 调整大小时节点尺寸吸附到 20px 网格步长
-      （默认关 = 历史 1px 粒度）。开启时尺寸
-      粒度强制为一个网格单元格（20px）。*/
+    _snapSize —— 调整大小时节点尺寸吸附到 20px 网格步长。关闭时尺寸
+      保持 1px 粒度（历史行为）。*/
   _snapNodes: true,
-  _snapSize: false,
+  _snapSize: true,
+  /*_snapRegionPos —— 分区框位置（创建落点 + 拖动）吸附到 20px 网格。
+    关闭后保持 1px 像素精度。
+    _snapRegionSize —— 分区框尺寸（创建框大小 + 手柄调整）吸附到 20px
+    网格步长。关闭后保持 1px 粒度。*/
+  _snapRegionPos: true,
+  _snapRegionSize: true,
   //当内联编辑器内的文本拖选结束于节点
   //外部时置位：浏览器随后会在画布（公共祖先）上触发单击，
   //该单击绝不能取消/覆盖激活中的内联编辑。
@@ -1335,6 +1635,20 @@ const App = window.App = {
   //真实节点拖拽结束后约 300ms 内置位：吞掉浏览器的
   //单击，以免刚拖拽的选中被其清除。
   _dragJustFinished: false,
+  //关联高亮（按住 Alt 单击节点）：高亮集合 = 被点节点 + 直接邻居（一层）。纯视觉态，不改变选中集合。
+  hlNodeIds: null,
+  //高亮涉及的连线 key 集合（两端节点都在 hlNodeIds 内）。
+  hlConnKeys: null,
+  //高亮置顶前捕获的节点全序快照（_nodeZOrder），清除时恢复原相对顺序。
+  _hlBaseOrder: null,
+  //高亮期间连线被抬升前，在各自组（lines/labels）内的位置快照：
+  //element → { group, index }，清除时按原索引归位。
+  _hlLiftPos: null,
+  //平移（拖动视角）松手后浏览器会补发一次画布 click：置位后
+  //下一次 _onCanvasClick 直接吞掉，保证"拖动视角不清除高亮"。
+  _panJustFinished: false,
+  //平移是否发生过实际位移（>5px，见 M13 rAF 平移处理），mouseup 据此置位。
+  _panActuallyMoved: false,
   _zOrderDirty: false,
   //基于锚点的 addNode 布局：第一次 addNode 调用锚定于
   //当前视口中心。此后每次调用在中心
@@ -1366,7 +1680,9 @@ const App = window.App = {
 写入的值均兼容（代表关闭的 '1'/'0' 与旧 ''）。*/
   _settings: {
     snapNodes: { key: 'flow_snap_nodes', def: true },
-    snapSize:  { key: 'flow_snap_size',  def: false },
+    snapSize:  { key: 'flow_snap_size',  def: true },
+    snapRegionPos:  { key: 'flow_snap_region_pos',  def: true },
+    snapRegionSize: { key: 'flow_snap_region_size', def: true },
     autoModal: { key: 'flow_auto_modal', def: false },
     genColor:  { key: 'flow_gen_color',  def: 'blue' },
     chromeHidden: { key: 'flow_hide_ui', def: false },
@@ -1390,6 +1706,15 @@ const App = window.App = {
       App._lsSet(this[name].key, val);
     }
   },
+  /* 对齐设置 4 项的接线映射：设置表名（_settings 行）→ App 字段 → 常规页开关 id。
+     M13 启动加载/开关绑定与 _resetSnapSettings 共用本表，映射只维护一份；
+     各项默认值仍以 _settings 表 def 为唯一事实源（当前 4 项出厂全开）。 */
+  _snapToggleDefs: [
+    { store: 'snapNodes', field: '_snapNodes', id: 'setSnapNodes' },
+    { store: 'snapSize', field: '_snapSize', id: 'setSnapSize' },
+    { store: 'snapRegionPos', field: '_snapRegionPos', id: 'setSnapRegionPos' },
+    { store: 'snapRegionSize', field: '_snapRegionSize', id: 'setSnapRegionSize' }
+  ],
 
   /* ── 共享小工具（多处复用，保持单一实现） ── */
   //通用 id 生成器：单调递增的会话内计数器 + 时间戳 +
@@ -1400,6 +1725,13 @@ const App = window.App = {
   //惰性构建的扇出偏移表（conn.id → offsetY）。在
   //每次数据变更时失效，保证一次变更后绝不残留过期偏移。
   _connOffsCache: null,
+  /*收起/展开派生缓存（不可序列化，仅渲染查询用）：
+     { hiddenIds: Set<nodeId>, avail: Map<nodeId, boolean> }。
+     由 _rebuildCollapseDerived 惰性重建；在 saveCanvasSnapshot /
+     _restoreCanvasSnapshot / _restoreFromSerialized 中失效
+     （与 _connOffsCache 相同的失效时机）。数据变更一律走
+     saveCanvasSnapshot，故无需额外失效入口。*/
+  _collapseDerived: null,
 
   debouncedAutoSave: null,
 
@@ -1457,6 +1789,9 @@ const App = window.App = {
   _snapRenderRaf: null,
   //数据流频率（Hz）。240Hz 已覆盖所有消费级显示器。
   _snapDataHz: 240,
+  //分区整组吸附动画（无单一 el 可挂 _snapAnim，故单独登记；
+  //renderCanvas 前由 _cancelRegionSnapAnim 取消）。
+  _regionSnapAnim: null,
   //Σ 彩蛋动画运行标记（防重入；见 M11 startEasterEgg）。
   _eggRunning: false
 };
@@ -1551,6 +1886,147 @@ Object.assign(App, {
     }
     return this._nodeByIdCache.get(id);
   },
+  /*── 收起 / 展开派生状态（单一缓存，M09 写入，M02 统一失效）──
+    数据模型：收起根节点携带 collapse = { hidden: [{id, dx, dy}, ...] }，
+    dx/dy 是收起瞬间各隐藏节点相对根节点的像素偏移（相对位置保存——根节点
+    移动后展开仍保持正确相对位置）。嵌套收起不做特殊处理：外层根
+    节点的闭包一并收下，内层根节点的 collapse 记录原样保留——外层展开不会
+    展开内层。
+    派生缓存 _collapseDerived = { hiddenIds: Set, avail: Map }：
+      hiddenIds —— 所有收起记录隐藏节点的并集（查询 _isCollapseHidden）；
+      avail     —— nodeId → 是否提供收起/展开徽标（_canToggleCollapse）。
+    一次重建、一次失效（与 _connOffsCache 同时机），避免两个缓存因
+    重建/失效点漂移而互相不一致。*/
+  _rebuildCollapseDerived() {
+    const hiddenIds = new Set();
+    for (const n of this.canvasState.nodes) {
+      if (!n.collapse || !Array.isArray(n.collapse.hidden) || n.collapse.hidden.length === 0) continue;
+      for (const h of n.collapse.hidden) {
+        if (!h || typeof h.id !== 'string' || h.id === n.id) continue;
+        hiddenIds.add(h.id);
+      }
+    }
+    const avail = new Map();
+    for (const n of this.canvasState.nodes) {
+      //已有非空收起记录 → +（可展开）；空记录（hidden:[]）不显示 + 徽标。
+      if (n.collapse && Array.isArray(n.collapse.hidden) && n.collapse.hidden.length > 0) { avail.set(n.id, true); continue; }
+      const closure = Weave.Geom.collapseClosure(this.canvasState.connections, n.id);
+      avail.set(n.id, closure.length > 0 && !Weave.Geom.hasMultiParentConflict(this.canvasState.connections, closure));
+    }
+    this._collapseDerived = { hiddenIds, avail };
+    return this._collapseDerived;
+  },
+  //派生缓存惰性访问器：未建则重建（渲染热路径避免重复判空）。
+  _collapseDerivedData() {
+    return this._collapseDerived || this._rebuildCollapseDerived();
+  },
+  //节点是否被任意收起记录的隐藏集收下（并集语义）
+  _isCollapseHidden(id) {
+    return this._collapseDerivedData().hiddenIds.has(id);
+  },
+  //连线是否因任一端点被收起而隐藏
+  _isConnectionCollapseHidden(conn) {
+    return this._isCollapseHidden(conn.from) || this._isCollapseHidden(conn.to);
+  },
+  //输出连接点是否可收起/展开：已有收起记录（+ 徽标），或闭包非空且无多父
+  //冲突（− 徽标）。多父冲突节点不出徽标（不提供任何动作）。
+  _canToggleCollapse(nodeId) {
+    return this._collapseDerivedData().avail.get(nodeId) === true;
+  },
+  //分区树的显式归属访问器。region.nodeIds = 本分区直属节点（拖入即加入、
+  //拖出即移除），region.parentId = 父分区 id（null = 顶级）。不依赖几何推导。
+  //子分区反向查询：遍历 regions 的 parentId。
+  _regionChildIds(parentId) {
+    const out = new Set();
+    this.canvasState.regions.forEach(r => {
+      if ((r.parentId || null) === (parentId || null) && r.id !== parentId) out.add(r.id);
+    });
+    return out;
+  },
+  //全部后代分区 id（含直接子与更深层，DFS 展开）。
+  _regionDescendantIds(id) {
+    const out = new Set();
+    const stack = [...this._regionChildIds(id)];
+    while (stack.length) {
+      const cid = stack.pop();
+      if (out.has(cid) || cid === id) continue;
+      out.add(cid);
+      this._regionChildIds(cid).forEach(x => stack.push(x));
+    }
+    return out;
+  },
+  //分区父链长度（渲染叠放与命中优先级：子分区画在父之上）。
+  _regionDepth(r) {
+    let d = 0;
+    let cur = r;
+    let guard = 0;
+    while (cur && cur.parentId && guard++ < 1000) {
+      d++;
+      cur = this._getRegionById(cur.parentId);
+    }
+    return d;
+  },
+  //分区及其全部后代分区的节点并集（移动整棵子树时随动节点）。
+  _regionAllNodeIds(regionId) {
+    const out = new Set();
+    const ids = [regionId, ...this._regionDescendantIds(regionId)];
+    this.canvasState.regions.forEach(r => {
+      if (ids.indexOf(r.id) !== -1 && Array.isArray(r.nodeIds)) {
+        r.nodeIds.forEach(nid => out.add(nid));
+      }
+    });
+    return out;
+  },
+  //世界坐标点命中的最深层分区（沿树向下找包含该点的最内层子区）。
+  _regionAtPoint(wx, wy) {
+    const hit = [];
+    this.canvasState.regions.forEach(r => {
+      if (wx >= r.x && wx <= r.x + r.w && wy >= r.y && wy <= r.y + r.h) hit.push(r);
+    });
+    if (!hit.length) return null;
+    //命中多个时取最深（父链最长）的那个。
+    let best = hit[0], bestDepth = this._regionDepth(hit[0]);
+    for (let i = 1; i < hit.length; i++) {
+      const d = this._regionDepth(hit[i]);
+      if (d > bestDepth) { best = hit[i]; bestDepth = d; }
+    }
+    return best;
+  },
+  //节点归属同步（显式 nodeIds 维护）：按节点中心点命中的最深层分区归属。
+  //命中 → 从所有分区 nodeIds 移除该 id 后加入命中分区（树形单归属）；
+  //未命中（拖出所有分区）→ 从所有分区移除。拖拽结束与新建节点后调用。
+  _syncNodeRegionMembership(nodeId) {
+    //直接遍历查找而非 _getNodeById：新建/克隆节点刚入数组时
+    //_nodeByIdCache 可能已存在且不含该节点（缓存过期），会查不到。
+    let n = null;
+    for (let i = 0; i < this.canvasState.nodes.length; i++) {
+      if (this.canvasState.nodes[i].id === nodeId) { n = this.canvasState.nodes[i]; break; }
+    }
+    if (!n) return;
+    const { x: nx, y: ny, w, h } = Weave.Geom.getNodeRect(n);
+    const target = this._regionAtPoint(nx + w / 2, ny + h / 2);
+    let changed = false;
+    this.canvasState.regions.forEach(r => {
+      if (!Array.isArray(r.nodeIds)) r.nodeIds = [];
+      const ids = r.nodeIds;
+      const idx = ids.indexOf(nodeId);
+      if (idx !== -1) {
+        //已在某区：目标不是该区 → 移除（后面重新加入目标区）。
+        if (!target || target.id !== r.id) { ids.splice(idx, 1); changed = true; }
+      }
+    });
+    if (target && target.nodeIds.indexOf(nodeId) === -1) {
+      target.nodeIds.push(nodeId);
+      changed = true;
+    }
+    return changed;
+  },
+  //切换分区创建模式（Region 键）。开启时画布加 region-mode 类供 CSS 提示。
+  _setRegionMode(on) {
+    this._regionModeActive = on;
+    const stage = this._getEl('canvasStage');
+    if (stage) stage.classList.toggle('region-mode', on);
+  },
   //状态徽标（左下角 "N 节点 · M 连线"）——调用于切语言、
   //渲染收尾与启动初始化。
   _updateStatusBadge() {
@@ -1570,13 +2046,18 @@ Object.assign(App, {
      持久化 localStorage 自动保存，它同时携带视口信息）。这样确保
      撤销/重做步仅代表真实变更。*/
   saveCanvasSnapshot() {
+    //存快照 = 画布数据发生（或即将发生）变更 = 一次画布操作：
+    //取消关联高亮（拖动视角/缩放不存快照，因此不受影响）。
+    this._clearHighlight();
     //任何数据变更都可能导致连线重排/新增/删除——因此平行偏移
     //偏移缓存不得比数据变更存活更久；节点 id 缓存同理。
     this._connOffsCache = null;
     this._nodeByIdCache = null;
+    this._collapseDerived = null;
     const snapshot = {
       nodes: structuredClone(this.canvasState.nodes),
-      connections: structuredClone(this.canvasState.connections)
+      connections: structuredClone(this.canvasState.connections),
+      regions: structuredClone(this.canvasState.regions)
     };
     const cur = this.canvasHistoryIndex >= 0 ? this.canvasState.history[this.canvasHistoryIndex] : null;
     //O(1) 快速路径：添加/删除操作总会改变数组长度，
@@ -1584,6 +2065,7 @@ Object.assign(App, {
     const changed = !cur ||
       cur.nodes.length !== snapshot.nodes.length ||
       cur.connections.length !== snapshot.connections.length ||
+      cur.regions.length !== snapshot.regions.length ||
       JSON.stringify(cur) !== JSON.stringify(snapshot);
     if (!changed) {
       this.saveCanvas();
@@ -1597,17 +2079,32 @@ Object.assign(App, {
     this.saveCanvas();
   },
 
+  //存档单位约定（用户视角恒为“格”，系统内部一次换算后全为像素）：
+  //  内存/交互/渲染 —— 全部世界像素（1 格 = GRID_PX px）
+  //  序列化存档   —— x/y/w/h（节点与分区）与 collapse.dx/dy 统一为“格”单位，
+  //                 即像素值 ÷ GRID_PX；加载时整体 × GRID_PX 还原像素。
   _serializeData() {
     return {
-      nodes: this.canvasState.nodes.map(n => ({
-        ...n,
+      nodes: this.canvasState.nodes.map(n => {
         //以完整精度表示网格单位：开启“对齐节点”时，位置是
         //20px 的整数倍（整数网格单位，与之前一致）；关闭时它们
         //可以是任意像素（1px = 0.05 个网格单位），因此此处若取整将
         //在重新加载时破坏该精度。加载时乘以 GRID_PX 即可还原。
-        x: n.x / GRID_PX,
-        y: n.y / GRID_PX
-      })),
+        //w/h 与 x/y 同规则折算为格单位。
+        const c = {
+          ...n,
+          x: n.x / GRID_PX,
+          y: n.y / GRID_PX,
+          w: n.w / GRID_PX,
+          h: n.h / GRID_PX
+        };
+        //收起记录的相对偏移与 x/y 同为像素坐标：按相同约定换算为
+        //网格单位（加载时还原），保证存档缩放语义一致。
+        if (n.collapse && Array.isArray(n.collapse.hidden)) {
+          c.collapse = { hidden: n.collapse.hidden.map(h => ({ id: h.id, dx: h.dx / GRID_PX, dy: h.dy / GRID_PX })) };
+        }
+        return c;
+      }),
       connections: this.canvasState.connections.map(c => {
         const o = { id: c.id, from: c.from, to: c.to, label: c.label };
         if (c.cp1) o.cp1 = c.cp1;
@@ -1617,6 +2114,11 @@ Object.assign(App, {
         //因此显式的 false 绝不会被重新解读为已镜像。
         o.mirrored = !!c.mirrored;
         return o;
+      }),
+      regions: this.canvasState.regions.map(r => {
+        //与节点相同的序列化规则：x/y/w/h 全部折算为网格单位（加载时还原）。
+        //显式归属直接写入：nodeIds（直属节点）、parentId（父分区，null = 顶级）。
+        return { id: r.id, label: r.label, color: r.color, x: r.x / GRID_PX, y: r.y / GRID_PX, w: r.w / GRID_PX, h: r.h / GRID_PX, nodeIds: (r.nodeIds || []).slice(), parentId: r.parentId || null };
       }),
       viewport: { panX: this.panX, panY: this.panY, scale: this.scale }
     };
@@ -1650,9 +2152,14 @@ Object.assign(App, {
   _restoreCanvasSnapshot(snapshot) {
     this.canvasState.nodes = structuredClone(snapshot.nodes);
     this.canvasState.connections = structuredClone(snapshot.connections);
+    this.canvasState.regions = structuredClone(snapshot.regions || []);
     this._connOffsCache = null;   //连线被替换 → 偏移量被重建
     this._nodeByIdCache = null;   //节点被替换 → id 映射被重建
+    this._collapseDerived = null; //收起记录随节点复原 → 派生状态重算
     this.selectedNodeIds.clear();
+    this.selectedRegionId = null;   //快照可能不包含该分区
+    this._regionResizeId = null;
+    this._frameMoveRegionId = null;
     this._dropSelectionIfGone(new Set(this.canvasState.nodes.map(n => n.id)));
     this._curveEditState = null;
     this._removeCurveHandles();
@@ -1686,14 +2193,29 @@ Object.assign(App, {
       //所有节点都是统一的：始终具有尺寸且可调整大小。
       if (typeof n.w !== 'number' || !isFinite(n.w)) n.w = NODE_DEFAULT_W; else if (n.w < NODE_MIN_W) n.w = NODE_MIN_W;
       if (typeof n.h !== 'number' || !isFinite(n.h)) n.h = NODE_DEFAULT_H; else if (n.h < NODE_MIN_H) n.h = NODE_MIN_H;
+      //收起记录清洗（结构层）：非对象 / hidden 非数组 / 字段缺型 → 剔除。
+      //引用层校验放在 nodeIds 全部确定之后（id 可能被重映射）。
+      if (n.collapse && (typeof n.collapse !== 'object' || !Array.isArray(n.collapse.hidden))) {
+        delete n.collapse;
+      }
+    });
+    //收起记录引用层清洗：hidden 中的 id 必须指向现存节点、非自引用、
+    //dx/dy 必须为有限数；清洗后为空 → 删除整条记录。
+    if (data.nodes.length) data.nodes.forEach(n => {
+      if (!n.collapse) return;
+      const alive = n.collapse.hidden.filter(h => h && typeof h === 'object' && typeof h.id === 'string' &&
+        h.id !== n.id && nodeIds.has(h.id) && isFinite(h.dx) && isFinite(h.dy));
+      if (alive.length !== n.collapse.hidden.length || alive.length === 0) {
+        if (alive.length) n.collapse = { hidden: alive };
+        else delete n.collapse;
+      }
     });
     if (Array.isArray(data.connections) && data.connections.length) {
       const validIds = new Set(data.nodes.map(n => n.id));
       const nodeMir = {};
       data.nodes.forEach(n => { nodeMir[n.id] = !!n.mirrored; });
       //清洗 cp1/cp2：每个必须是带数值型 dx/dy 的普通对象。
-      //无效控制点会在路径几何中产生 NaN（NaN+数字
-      //= NaN），因此我们剥离它们而不是丢弃整条连线。
+      //无效控制点会在路径几何中产生 NaN（NaN+数字=NaN），因此我们剥离它们而不是丢弃整条连线。
       const sanitizeCp = (cp) => cp && typeof cp === 'object' && typeof cp.dx === 'number' && isFinite(cp.dx) && typeof cp.dy === 'number' && isFinite(cp.dy) ? cp : null;
       //连线 id 必须唯一（它们作为渲染/选中/平行偏移的键）：
       //缺失的 id 为其生成，文件中重复的 id 则重新生成。
@@ -1715,6 +2237,55 @@ Object.assign(App, {
     } else {
       data.connections = [];
     }
+    //分区清洗（结构层 + 数值层）：缺型 / 非有限数值 → 剔除（旧存档无 regions 键
+    //时为空数组，天然兼容）。id 唯一化规则与节点一致。nodeIds = 显式归属的
+    //直属节点（绝对定义）；parentId = 显式父分区（null = 顶级）。
+    if (data.regions === undefined) data.regions = [];
+    if (!Array.isArray(data.regions)) data.regions = [];
+    const seenRegionIds = new Set();
+    data.regions = data.regions.filter(r => {
+      if (!r || typeof r !== 'object') return false;
+      if (typeof r.x !== 'number' || !isFinite(r.x) || typeof r.y !== 'number' || !isFinite(r.y) ||
+          typeof r.w !== 'number' || !isFinite(r.w) || r.w <= 0 ||
+          typeof r.h !== 'number' || !isFinite(r.h) || r.h <= 0) return false;
+      if (typeof r.id !== 'string' || !r.id || seenRegionIds.has(r.id)) r.id = this._genId('rg');
+      while (seenRegionIds.has(r.id)) r.id = this._genId('rg');
+      seenRegionIds.add(r.id);
+      if (!r.label || typeof r.label !== 'string') r.label = this.t('misc.region');
+      if (typeof r.color !== 'string' || (!COLORS.includes(r.color) && !RE_HEX6.test(r.color))) r.color = 'blue';
+      //显式成员表：缺省/非数组 → 空数组（旧存档兼容）。
+      if (!Array.isArray(r.nodeIds)) r.nodeIds = [];
+      return true;
+    });
+    //二次清洗：nodeIds 必须指向现存节点且不重复；parentId 必须指向现存分区、
+    //非自身；父链无环（把成环边的 parentId 置空）。
+    if (data.regions.length) {
+      const nodeIdSet = new Set(data.nodes.map(n => n.id));
+      const regionIdSet = new Set(data.regions.map(r => r.id));
+      data.regions.forEach(r => {
+        r.nodeIds = r.nodeIds.filter((nid, i, arr) => typeof nid === 'string' && nodeIdSet.has(nid) && arr.indexOf(nid) === i);
+        if (r.parentId !== undefined && r.parentId !== null) {
+          if (typeof r.parentId !== 'string' || !regionIdSet.has(r.parentId) || r.parentId === r.id) r.parentId = null;
+        } else {
+          r.parentId = null;
+        }
+      });
+      //环检测：沿 parent 链走，遇到环则断开该边的 parentId。
+      const chainSeen = (startId) => {
+        let cur = startId, guard = 0;
+        const seen = new Set();
+        while (cur && guard++ < data.regions.length + 1) {
+          if (seen.has(cur)) return true;
+          seen.add(cur);
+          const rr = data.regions.find(x => x.id === cur);
+          cur = rr && rr.parentId ? rr.parentId : null;
+        }
+        return false;
+      };
+      data.regions.forEach(r => {
+        if (r.parentId && chainSeen(r.parentId)) r.parentId = null;
+      });
+    }
   },
 
   //导入/加载路径：将序列化存档解析为全新的画布状态
@@ -1728,11 +2299,34 @@ Object.assign(App, {
   _restoreFromSerialized(d, opts) {
     opts = opts || {};
     if (!d.nodes || !Array.isArray(d.nodes)) return false;
-    d.nodes.forEach((n) => { n.x *= GRID_PX; n.y *= GRID_PX; });
+    //存档单位约定：x/y/w/h（节点与分区）与 collapse.dx/dy 一律为“格”单位，
+    //加载时整体 ×GRID_PX 还原为世界像素（与 _serializeData 对称）。
+    //非法条目（null/缺型）跳过换算，由 _validateLoadedData 清洗剔除。
+    d.nodes.forEach((n) => {
+      n.x *= GRID_PX; n.y *= GRID_PX;
+      if (isFinite(n.w)) n.w *= GRID_PX;
+      if (isFinite(n.h)) n.h *= GRID_PX;
+      //收起记录的相对偏移与 x/y 同为网格单位（见 _serializeData）：还原为像素。
+      if (n.collapse && Array.isArray(n.collapse.hidden)) {
+        n.collapse.hidden.forEach(h => { if (h && isFinite(h.dx) && isFinite(h.dy)) { h.dx *= GRID_PX; h.dy *= GRID_PX; } });
+      }
+    });
     this.canvasState.nodes = d.nodes;
     this.canvasState.connections = Array.isArray(d.connections) ? d.connections : [];
+    //分区还原：坐标与尺寸换算为像素（与节点同规则）；无 regions 键的存档兼容为空。
+    if (Array.isArray(d.regions)) {
+      d.regions.forEach(r => {
+        r.x *= GRID_PX; r.y *= GRID_PX;
+        if (isFinite(r.w)) r.w *= GRID_PX;
+        if (isFinite(r.h)) r.h *= GRID_PX;
+      });
+      this.canvasState.regions = d.regions;
+    } else {
+      this.canvasState.regions = [];
+    }
     this._connOffsCache = null;   //全新画布 → 重建派生缓存
     this._nodeByIdCache = null;
+    this._collapseDerived = null;
     this._validateLoadedData(this.canvasState);
     let newViewport = false;
     if (d.viewport && typeof d.viewport.panX === 'number') {
@@ -1748,6 +2342,9 @@ Object.assign(App, {
     //使旧 id 绝不会悬空残留到新画布中。
     this.selectedNodeIds.clear();
     this.selectedConnIds.clear();
+    this.selectedRegionId = null;
+    this._regionResizeId = null;
+    this._frameMoveRegionId = null;
     this._curveEditState = null;
     this._removeCurveHandles();
     this._hideResizeHandles();
@@ -2067,6 +2664,10 @@ Object.assign(App, {
     //第 2 步 缩放：transform 的 scale，创建新的合成器图层
     const nodesC = this._getEl('canvasNodes');
     if (nodesC) nodesC.style.transform = 'scale(' + this.scale + ')';
+    //高亮抬升层位于节点容器内：按 1/scale 反向缩放，抵消父容器缩放，
+    //使其预乘 scale 的屏幕坐标保持 1:1。
+    const hlSvg = this._getEl('linesSvgHl');
+    if (hlSvg) hlSvg.style.transform = 'scale(' + (1 / this.scale) + ')';
 
     //第 3 步 变化大于 3% → 强制重新光栅化以保持节点文字清晰
     const scaleDiff = Math.abs(this.scale - this._lastRenderScale);
@@ -2074,12 +2675,17 @@ Object.assign(App, {
 
     //第 4 步 连线 SVG：重新渲染路径
     this.renderLines();
+    //第 4.5 步 分区 SVG：几何预乘 scale，缩放时同步重建
+    this._renderRegions();
 
     //第 5 步 网格画布：像素对齐绘制
     this._drawGrid();
 
     //第 6 步 坐标 HUD 更新
     this.updateCoordDisplay();
+
+    //第 7 步 关联高亮的模糊半径随缩放折算（仅高亮期间需要）
+    if (this.hlNodeIds) this._hlBlur(true);
   },
 
   /** 网格通过 Canvas 2D 在屏幕像素空间中绘制。
@@ -2215,10 +2821,25 @@ Object.assign(App, {
 
   centerCanvasOnNodes() {
     const c = this._getEl('canvasStage');
-    if (!c || this.canvasState.nodes.length === 0) { this.centerCanvasOnOrigin(); return; }
+    if (!c || (this.canvasState.nodes.length === 0 && this.canvasState.regions.length === 0)) { this.centerCanvasOnOrigin(); return; }
     if (c.clientWidth === 0 || c.clientHeight === 0) { setTimeout(() => this.centerCanvasOnNodes(), 50); return; }
-    const bb = Weave.Geom.nodesBBox(this.canvasState.nodes, n => Weave.Geom.getNodeRect(n));
-    const minX = bb.minX, maxX = bb.maxX, minY = bb.minY, maxY = bb.maxY;
+    //收起隐藏的节点不参与"适应视图"边界（其相对位置在展开时恢复）。
+    const visNodes = this.canvasState.nodes.filter(n => !this._isCollapseHidden(n.id));
+    let minX, maxX, minY, maxY;
+    if (visNodes.length) {
+      const bb = Weave.Geom.nodesBBox(visNodes, n => Weave.Geom.getNodeRect(n));
+      minX = bb.minX; maxX = bb.maxX; minY = bb.minY; maxY = bb.maxY;
+    } else {
+      const r0 = this.canvasState.regions[0];
+      minX = r0.x; maxX = r0.x + r0.w; minY = r0.y; maxY = r0.y + r0.h;
+    }
+    //分区参与适应视图：把每个分区矩形并入包围盒。
+    this.canvasState.regions.forEach(r => {
+      if (r.x < minX) minX = r.x;
+      if (r.x + r.w > maxX) maxX = r.x + r.w;
+      if (r.y < minY) minY = r.y;
+      if (r.y + r.h > maxY) maxY = r.y + r.h;
+    });
     const pad = 40, nodeW = maxX - minX, nodeH = maxY - minY;
     if (nodeW === 0 && nodeH === 0) {
       this.scale = 1;
@@ -2264,7 +2885,9 @@ Object.assign(App, {
     const nodesContainer = this._getEl('canvasNodes');
     if (nodesContainer) {
       for (const id of this._nodeZOrder) {
-        const zel = this._nodeElMap.get(id); if (zel) nodesContainer.appendChild(zel);
+        const zel = this._nodeElMap.get(id);
+        //在当前所属层内重排（高亮期间被抬起的节点位于 #nodeLayerHl）
+        if (zel) (zel.parentNode || nodesContainer).appendChild(zel);
       }
     }
     this._zOrderDirty = false;
@@ -2291,6 +2914,90 @@ Object.assign(App, {
     }
   },
 
+  //节点"是否显示选中视觉"：真选中 或 关联高亮（高亮只是视觉，不改选中集合）。
+  _nodeIsSel(id) {
+    return this.selectedNodeIds.has(id) || !!(this.hlNodeIds && this.hlNodeIds.has(id));
+  },
+  //连线"是否显示选中视觉"：真选中 或 高亮连线。
+  _connIsSel(k) {
+    return this.selectedConnIds.has(k) || !!(this.hlConnKeys && this.hlConnKeys.has(k));
+  },
+  //清除关联高亮并还原置顶前顺序（见 _liftHlLayer）。
+  //"拖动视角/缩放画布"之外的任何画布操作都会触发（renderCanvas / saveCanvasSnapshot
+  //入口 + 连线点击 / 右键菜单 / socket 起点），保证高亮只被视图操作保留。
+  _clearHighlight() {
+    if (!this.hlNodeIds && !this.hlConnKeys) return;
+    this.hlNodeIds = null;
+    this.hlConnKeys = null;
+    //高亮节点移回主层并清除标记；真选中节点的 selected 类保留。
+    const mainLayer = this._getEl('nodeLayerMain');
+    this._nodeElMap.forEach((el, id) => {
+      if (!this.selectedNodeIds.has(id)) el.classList.remove('selected');
+      if (el.classList.contains('hl-on')) {
+        el.classList.remove('hl-on');
+        if (mainLayer) mainLayer.appendChild(el);
+      }
+    });
+    this._hlBlur(false);
+    //还原节点全序：仍在图中的 id 按 _hlBaseOrder 归位；快照后的新节点（理论上
+    //操作已清高亮，此处仅兜底）按当前顺序接在末尾。
+    if (this._hlBaseOrder) {
+      const cur = this._nodeZOrder;
+      const keep = new Set(cur);
+      const next = this._hlBaseOrder.filter(id => keep.has(id));
+      cur.forEach(id => { if (!this._hlBaseOrder.includes(id)) next.push(id); });
+      this._nodeZOrder = next;
+      this._zOrderDirty = true;
+      //层已归位，立即按还原后的顺序重排 DOM（不必等到下次 renderCanvas）。
+      this._applyZOrder();
+    }
+    this._hlBaseOrder = null;
+    //还原连线元素在各自组内的位置（从抬升组移回并重排）。
+    if (this._hlLiftPos) {
+      const svg = this._getEl('linesSvg');
+      if (svg) {
+        const baseLines = svg.querySelector('.conn-group:not(.temp) .lines');
+        const baseLabels = svg.querySelector('.conn-group:not(.temp) .labels');
+        const restoreGroup = (group, els) => {
+          if (!group || !els || !els.length) return;
+          els.forEach(el => { if (el.parentNode && el.parentNode !== group) group.appendChild(el); });
+          //按快照索引稳定排序：未记录的元素保持原相对位置。
+          const idx = new Map();
+          this._hlLiftPos.forEach(rec => { if (rec.group === group) idx.set(rec.el, rec.index); });
+          const kids = Array.prototype.slice.call(group.children);
+          kids.sort((a, b) => {
+            const ia = idx.has(a) ? idx.get(a) : -1, ib = idx.has(b) ? idx.get(b) : -1;
+            if (ia === -1 && ib === -1) return 0;
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+          });
+          kids.forEach(el => group.appendChild(el));
+        };
+        //按记录的原始分组分别归位：同一条线的视觉/命中路径与箭头属于 lines 组，
+        //文字属于 labels 组。两组共用同一数组会把元素全部塞进后一个组。
+        const movedTo = g => this._hlLiftPos.filter(rec => rec.group === g).map(rec => rec.el);
+        restoreGroup(baseLines, movedTo(baseLines));
+        restoreGroup(baseLabels, movedTo(baseLabels));
+        const hlSvg = this._getEl('linesSvgHl');
+        const lift = hlSvg ? hlSvg.querySelector('.conn-group.hl-lift') : null;
+        if (lift) lift.remove();
+      }
+      this._hlLiftPos = null;
+    }
+    //连线类/宽度刷新（走 rAF；若调用方随后 renderCanvas 会合并为一次）。
+    this.renderLines();
+  },
+
+  //关联高亮的背景模糊开关：.hl-blur 驱动非高亮内容的模糊（规则见 CSS）。
+  //--hl-scale 供连线与分区层把世界半径折算为屏幕半径，随缩放刷新。
+  _hlBlur(on) {
+    const stage = this._getEl('canvasStage');
+    if (!stage) return;
+    stage.classList.toggle('hl-blur', on);
+    if (on) stage.style.setProperty('--hl-scale', String(this.scale));
+  },
+
   _forceRerender() {
     if (this._forceRerenderPending) return;
     this._forceRerenderPending = true;
@@ -2298,12 +3005,22 @@ Object.assign(App, {
       this._forceRerenderPending = false;
       const nodes = document.getElementById('canvasNodes');
       if (!nodes) return;
+      //重插会短暂清除浏览器 :hover（真实浏览器中 DOM 节点脱离文档即失焦），
+      //导致缩放时悬停 socket 反复 缩小→放大（抽搐）。重插前用 hover-lock
+      //冻结其视觉状态，下一帧解除，让浏览器重新命中测试接管。
+      const locked = [];
+      nodes.querySelectorAll('.socket:hover').forEach(el => {
+        if (!el.classList.contains('dragging')) { el.classList.add('hover-lock'); locked.push(el); }
+      });
       nodes.style.willChange = 'transform';
       const parent = nodes.parentNode;
       const next = nodes.nextSibling;
       parent.removeChild(nodes);
       parent.insertBefore(nodes, next);
-      requestAnimationFrame(() => { nodes.style.willChange = ''; });
+      requestAnimationFrame(() => {
+        locked.forEach(el => el.classList.remove('hover-lock'));
+        nodes.style.willChange = '';
+      });
     });
   },
 
@@ -2323,6 +3040,7 @@ Object.assign(App, {
     const canvas = document.getElementById('canvasContainer');
     if (!canvas) return false;
     this._nodeElMap.forEach(el => { this._cancelSnapAnim(el); });
+    this._cancelRegionSnapAnim();
     return true;
   },
 
@@ -2334,11 +3052,18 @@ Object.assign(App, {
         '<div class="canvas" id="canvasStage">' +
           '<canvas id="gridCvs"></canvas>' +
           '<div class="canvas-world" id="canvasWorld">' +
+            '<svg class="regions-svg" id="regionsSvg" style="overflow:visible"></svg>' +
+            '<div class="region-labels" id="regionLabels"></div>' +
             '<svg class="lines-svg" id="linesSvg" style="overflow:visible"></svg>' +
-            '<div class="canvas-nodes" id="canvasNodes"></div>' +
+            '<div class="canvas-nodes" id="canvasNodes">' +
+              '<div class="node-layer" id="nodeLayerMain"></div>' +
+              '<svg class="lines-svg hl-lift-svg" id="linesSvgHl" width="1" height="1" style="overflow:visible"></svg>' +
+              '<div class="node-layer" id="nodeLayerHl"></div>' +
+            '</div>' +
             '<svg class="curve-overlay" id="curveOverlay" width="1" height="1" style="overflow:visible"></svg>' +
           '</div>' +
           '<div class="sel-overlay" id="boxSelectOverlay" style="display:none;"></div>' +
+          '<div class="region-preview" id="regionPreview" style="display:none;"></div>' +
           '<div class="coord" id="coord">' +
             '<span class="coord-val" id="coordX" contenteditable="true">0</span>' +
             '<span class="coord-sep">, </span>' +
@@ -2379,7 +3104,7 @@ Object.assign(App, {
           '</div>' +
           RESIZE_HANDLES_HTML +
           '<div class="socket in" data-dir="in"><div class="socket-inner"></div></div>' +
-          '<div class="socket out" data-dir="out"><div class="socket-inner"></div></div>';
+          '<div class="socket out" data-dir="out"><div class="socket-inner"></div><div class="socket-fold"><svg class="fold-icon" viewBox="0 0 8 8" aria-hidden="true"><line class="fold-h" x1="1" y1="4" x2="7" y2="4"/><line class="fold-v" x1="4" y1="1" x2="4" y2="7"/></svg></div></div>';
 
         nodeEl._hdr = nodeEl.querySelector('.node-header');
         nodeEl._body = nodeEl.querySelector('.node-body');
@@ -2389,11 +3114,12 @@ Object.assign(App, {
         nodeEl._sckOut = nodeEl.querySelector('.socket.out');
         nodeEl._sckInIn = nodeEl.querySelector('.socket.in .socket-inner');
         nodeEl._sckOutIn = nodeEl.querySelector('.socket.out .socket-inner');
+        nodeEl._fold = nodeEl.querySelector('.socket.out .socket-fold');
         nodeEl._close = nodeEl.querySelector('.node-close');
 
         this._bindNodeEvents(nodeEl, node.id);
         this._nodeElMap.set(node.id, nodeEl);
-        nodesContainer.appendChild(nodeEl);
+        (this._getEl('nodeLayerMain') || nodesContainer).appendChild(nodeEl);
       }
 
       this._updateNodeAppearance(nodeEl, node);
@@ -2442,7 +3168,7 @@ Object.assign(App, {
   _updateNodeAppearance(nodeEl, node) {
     //className 在此重建，因此需重新追加 'resizing' 标志和
     //'mirrored' 类——否则任何渲染都会将它们清掉。
-    nodeEl.className = 'node' + (node.mirrored ? ' mirrored' : '') + (this.selectedNodeIds.has(node.id) ? ' selected' : '') + (this.dragState && this.dragState.nodeId === node.id ? ' dragging' : '') + (nodeEl.classList.contains('resizing') ? ' resizing' : '');
+    nodeEl.className = 'node' + (node.mirrored ? ' mirrored' : '') + (this._nodeIsSel(node.id) ? ' selected' : '') + (this.dragState && this.dragState.nodeId === node.id ? ' dragging' : '') + (nodeEl.classList.contains('resizing') ? ' resizing' : '') + (this._isCollapseHidden(node.id) ? ' collapse-hidden' : '');
 
     this._syncResizeHandles(nodeEl, node.id);
     this._applyNodeSize(nodeEl, node);
@@ -2467,9 +3193,36 @@ Object.assign(App, {
     nodeEl._sckOut.style.borderColor = bdr;
     nodeEl._sckInIn.style.background = bdr;
     nodeEl._sckOutIn.style.background = bdr;
+    //输出 socket 的 fold 徽标（−/+）用 SVG 线条 + currentColor 跟随节点色。
+    nodeEl._sckOut.style.color = rc.hex;
     nodeEl._sckIn.dataset.node = node.id;
     nodeEl._sckOut.dataset.node = node.id;
+    this._syncFoldBadge(nodeEl, node);
+    //被收起记录隐藏的节点整体不渲染。此处只降级为隐藏、绝不恢复显示：
+    //display 的"恢复"由 _updateNodeVisibility（视口剔除）统一负责，
+    //避免外观更新把视口剔除的状态覆盖回可见。
+    if (this._isCollapseHidden(node.id)) nodeEl.style.display = 'none';
     //socket 的左右镜像由 CSS 通过 .node.mirrored 驱动。
+  },
+
+  //输出连接点的收起徽标同步：
+  //  - 未收起：可收起（无多父冲突、有后续连线）时 fold-avail 使 − 常态显示，点击收起；
+  //  - 已收起：fold-on 使 + 常态显示（不依赖悬停），点击展开。
+  //fold-avail 门控：无可收起内容 / 存在多父冲突时不出 − 徽标（不提供动作）。
+  _syncFoldBadge(nodeEl, node) {
+    const canFold = this._canToggleCollapse(node.id);
+    nodeEl._sckOut.classList.toggle('fold-avail', canFold && !node.collapse);
+    nodeEl._sckOut.classList.toggle('fold-on', !!node.collapse);
+    //徽标图标：fold-plus 显示 +（竖条+横条），默认 −（仅横条）
+    if (nodeEl._fold) nodeEl._fold.classList.toggle('fold-plus', !!node.collapse);
+  },
+  //连线增删后的徽标重算：收起闭包由节点出发的连线推导，任一连线变化
+  //都可能改变多个节点的徽标（含上游祖先、多父冲突解除），故整体重算。
+  _refreshFoldBadges() {
+    this.canvasState.nodes.forEach(n => {
+      const el = this._nodeElMap.get(n.id);
+      if (el && el._sckOut) this._syncFoldBadge(el, n);
+    });
   },
 
   _postRenderUpdate() {
@@ -2517,8 +3270,12 @@ Object.assign(App, {
 
   renderCanvas({ center = false } = {}) {
     if (!this._prepCanvas()) return;
+    //任何画布操作都会走到这里重绘（拖动视角 / 缩放画布除外，它们只走
+    //applyViewTransform/renderLines），因此在此清除关联高亮：操作结束即取消。
+    this._clearHighlight();
     this._ensureCanvasSkeleton();
     this._renderNodes();
+    this._renderRegions();
     this._initGlobalEvents();
     this._postRenderUpdate();
     this._finalizeRender();
@@ -2532,6 +3289,300 @@ Object.assign(App, {
    ────────────────────────────────────────────────────────────────── */
 
 Object.assign(App, {
+  // ── 分区渲染（SVG rect，位于连线层之下）──
+  //区域矩形几何：预乘 scale（同连线路径规则），平移由 .canvas-world 承担。
+  //每次完整渲染重建；选区变化仅重发 class（经 renderCanvas 全量走）。
+  _renderRegions() {
+    const svg = this._getEl('regionsSvg');
+    if (!svg) return;
+    //重建标签层前先落定进行中的标签编辑会话：焦点元素将随层清空被移除，
+    //届时 blur 触发保存——但保存路径会再次 renderCanvas（见
+    //_enterRegionLabelEdit 的 finish），与本渲染互相嵌套。这里显式结束
+    //会话（无渲染），把保存留给本次重建完成后统一完成。
+    this._endRegionLabelEdit(true);
+    svg.textContent = '';
+    const labelLayer = this._getEl('regionLabels');
+    if (labelLayer) labelLayer.textContent = '';
+    const s = this.scale;
+    const self = this;
+    //嵌套渲染顺序：父先画、子后画（子框叠于父框之上）。
+    //排序键 = 显式树深度（parentId 链长），稳定排序保持创建序。
+    const regions = this.canvasState.regions.slice();
+    regions.sort((a, b) => this._regionDepth(a) - this._regionDepth(b));
+    regions.forEach(r => {
+      const rc = this._resolveColor(r.color);
+      const hex = rc.hex;
+      const x = r.x * s, y = r.y * s, w = r.w * s, h = r.h * s;
+      const isSel = this.selectedRegionId === r.id;
+      const isFrameMove = this._frameMoveRegionId === r.id;
+      const isResize = this._regionResizeId === r.id;
+      //描边宽度随缩放（同节点 1px 世界边框）：选中/仅移动/调整态加深加粗。
+      const sw = 1.5 * s * (isSel || isFrameMove || isResize ? 1.6 : 1);
+      const rect = Weave.Util.svgEl('rect', {
+        x: x, y: y, width: w, height: h, rx: 10 * s, ry: 10 * s,
+        class: 'region-rect' + (isSel ? ' selected' : '') + (isFrameMove ? ' frame-move' : '') + (isResize ? ' resizing' : ''),
+        fill: hex, 'fill-opacity': isSel || isFrameMove || isResize ? .14 : .05,
+        stroke: hex, 'stroke-opacity': isSel || isFrameMove || isResize ? .95 : .5,
+        'stroke-width': sw
+      });
+      rect.dataset.regionId = r.id;
+      svg.appendChild(rect);
+      //调整分区框大小模式的叠加层（与节点 resize 模式同构）：
+      //外圈 accent 虚线框 + 四角手柄（白底 accent 描边圆角方块，尺寸随缩放）。
+      if (isResize) {
+        //外圈虚线框（对应节点 .resizing::before）
+        const dash = Weave.Util.svgEl('rect', {
+          x: x - 4 * s, y: y - 4 * s, width: w + 8 * s, height: h + 8 * s,
+          rx: 10 * s + 4 * s, ry: 10 * s + 4 * s,
+          class: 'region-resize-frame',
+          fill: 'none', stroke: '#3b82f6', 'stroke-opacity': .9,
+          'stroke-width': 1.5 * s, 'stroke-dasharray': (5 * s) + ',' + (4 * s)
+        });
+        dash.style.pointerEvents = 'none';
+        svg.appendChild(dash);
+        //四角手柄：尺寸 10*s、白底、accent 1.5*s 描边、3*s 圆角（同 .rsz-handle）
+        const hs = 5 * s;   //半边长
+        const mkHandle = (cx, cy, dir) => {
+          const h = Weave.Util.svgEl('rect', {
+            x: cx - hs, y: cy - hs, width: hs * 2, height: hs * 2,
+            rx: 3 * s, ry: 3 * s,
+            class: 'region-rsz-handle',
+            fill: '#fff', stroke: '#3b82f6', 'stroke-width': 1.5 * s,
+            'data-dir': dir
+          });
+          h.dataset.regionId = r.id;
+          h.addEventListener('mousedown', ev => {
+            if (ev.button !== 0) return;
+            ev.preventDefault(); ev.stopPropagation();
+            if (this.readOnly) return;
+            this._startRegionResizeDrag(ev, r, dir);
+          });
+          svg.appendChild(h);
+        };
+        mkHandle(x, y, 'nw');
+        mkHandle(x + w, y, 'ne');
+        mkHandle(x, y + h, 'sw');
+        mkHandle(x + w, y + h, 'se');
+      }
+      //标签渲染到 HTML 层（regionLabels）：与连线同受 canvas-world 平移，
+      //元素 transform 预乘 scale 定位，font-size 预乘 scale。
+      //双击标签直接进入 contenteditable（同节点标题编辑，无输入框浮层）。
+      const labelLayer = this._getEl('regionLabels');
+      const lbl = r.label || '';
+      const fs = REGION_LABEL_FONT * s;
+      const padX = 8 * s;
+      const labelEl = document.createElement('div');
+      labelEl.className = 'region-label';
+      labelEl.dataset.regionId = r.id;
+      labelEl.dataset.regionLabel = r.id;
+      labelEl.textContent = lbl;
+      labelEl.style.fontSize = fs + 'px';
+      //标签 div 顶边置于矩形顶边下方（glyph 顶部再多让出 ~0.4 字号，
+      //使文字整体落在框内上沿，不越出分区范围）。
+      labelEl.style.transform = T(x + padX, y + fs * 0.75);
+      if (labelLayer) labelLayer.appendChild(labelEl);
+      //事件：单击/拖拽移动分区；双击 = contenteditable 改名。
+      labelEl.addEventListener('mousedown', ev => {
+        ev.stopPropagation();
+        if (ev.button !== 0) return;
+        //编辑会话内：保留 mousedown 默认行为（光标定位/选字），
+        //不进入拖拽，也不做双击改名判定（节点编辑同规则）。
+        if (labelEl.classList.contains('editing')) return;
+        if (this._regionDblLabel && this._regionDblLabel.regionId === r.id &&
+            Math.abs(ev.clientX - this._regionDblLabel.x) < 8 && Math.abs(ev.clientY - this._regionDblLabel.y) < 8) {
+          ev.preventDefault();
+          clearTimeout(this._regionDblLabel.timerId);
+          this._regionDblLabel = null;
+          //重新取当前文档中的标签元素（拖拽 onUp 的渲染可能已重建）。
+          const cur = this._getEl('regionLabels').querySelector('[data-region-label="' + r.id + '"]');
+          if (cur) this._enterRegionLabelEdit(r, cur);
+          return;
+        }
+        if (this._regionDblLabel) clearTimeout(this._regionDblLabel.timerId);
+        const timerId = setTimeout(() => { this._regionDblLabel = null; }, 250);
+        this._regionDblLabel = { regionId: r.id, x: ev.clientX, y: ev.clientY, timerId };
+        beginRegionDrag(ev);
+      });
+      labelEl.addEventListener('contextmenu', ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        this._selectRegionOnly(r.id);
+        this._hideResizeHandles();
+        this.showCtx(ev.clientX, ev.clientY, null, null, null, r.id);
+      });
+      //阻止原生 dblclick 冒泡到画布（否则会被当作空白双击建节点，
+      //打断正在进行的标签编辑或造成重复建节点）。
+      labelEl.addEventListener('dblclick', ev => { ev.stopPropagation(); ev.preventDefault(); });
+      //标签上的单击不落入画布"空白单击"路径（该路径会清选中并整层重绘，
+      //重建标签会中断编辑会话——节点标题的 click 由 .node 归属拦截，标签无此归属）。
+      labelEl.addEventListener('click', ev => { ev.stopPropagation(); });
+      //事件（重新绑定——元素每次重建）。rect 手工双击 = 生成节点（与
+      //画布空白双击一致），不再是打开属性弹窗。
+      //拖拽分派（rect 与 label 共用）：含模式退出与"仅移动框体"判断。
+      const beginRegionDrag = ev => {
+        if (this.readOnly) { this._selectRegionOnly(r.id); return; }
+        if (this._regionResizeId) { this._exitRegionResize(); }
+        //点其它分区时退出旧的仅移动模式。
+        if (this._frameMoveRegionId && this._frameMoveRegionId !== r.id) this._exitRegionFrameMove();
+        //"移动分区框"模式内：本次拖拽只移动框体（模式保持，便于连续微调）。
+        if (this._frameMoveRegionId === r.id) {
+          this.startRegionMove(ev, r, true);
+          return;
+        }
+        this.startRegionMove(ev, r);
+      };
+      const onDragStart = ev => {
+        if (ev.button !== 0) return;
+        //Shift+左键放行给画布框选（同节点：rect 不拦截框选手势）。
+        if (ev.shiftKey) return;
+        if (this.readOnly) return;   //只读：不记录手势；单击选中由 click 处理
+        const prev = this._regionDblRect;
+        if (prev && prev.regionId === r.id && Math.abs(ev.clientX - prev.x) < 8 && Math.abs(ev.clientY - prev.y) < 8) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          clearTimeout(prev.timerId);
+          this._regionDblRect = null;
+          //在双击位置生成节点（同画布空白双击；Ctrl+双击同节点逻辑）。
+          //双击不选中分区：第一击的单击已选中它（click 选中），此处清除；
+          //并抑制随后的浏览器 click（第二击）再次选中。
+          if (this.selectedRegionId === r.id) this._clearRegionSelection();
+          this._regionDblCreated = true;
+          this._regionPanMoved = false;
+          const wp = this.getWorldPos(ev.clientX, ev.clientY);
+          const newId = this._addNodeAt(wp.x, wp.y);
+          if (newId && (ev.ctrlKey || ev.metaKey)) setTimeout(() => this.openNodeModal(newId), 0);
+          return;
+        }
+        if (prev) clearTimeout(prev.timerId);
+        const timerId = setTimeout(() => { this._regionDblRect = null; }, 250);
+        this._regionDblRect = { regionId: r.id, x: ev.clientX, y: ev.clientY, timerId };
+        if (this._regionResizeId) { this._exitRegionResize(); }
+        if (this._frameMoveRegionId && this._frameMoveRegionId !== r.id) this._exitRegionFrameMove();
+        if (this.selectedRegionId === r.id) {
+          //已选中：本次按下拖动 = 移动分区。
+          ev.stopPropagation();
+          this._regionPanMoved = false;
+          if (this._frameMoveRegionId === r.id) this.startRegionMove(ev, r, true);
+          else this.startRegionMove(ev, r);
+        } else {
+          //未选中：不选中、不拦截——放行给画布（按下拖动 = 平移背景）。
+          //选中延迟到 click（无位移的单击才选中）；平移位移由全局
+          //mousemove 置 _regionPanMoved，click 据此不选中。
+          this._regionPanMoved = false;
+        }
+      };
+      const onCtx = ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        this._selectRegionOnly(r.id);
+        this._hideResizeHandles();
+        this.showCtx(ev.clientX, ev.clientY, null, null, null, r.id);
+      };
+      rect.addEventListener('mousedown', onDragStart);
+      //单击（无位移、非双击）选中分区。选中延迟到 click：
+      //按下即拖动（平移背景）或双击建节点后，浏览器仍会派发 click，
+      //用 _regionPanMoved / _regionDblCreated 抑制，避免误选中。
+      rect.addEventListener('click', ev => {
+        ev.stopPropagation();
+        if (this._regionPanMoved) { this._regionPanMoved = false; return; }
+        if (this._regionDblCreated) { this._regionDblCreated = false; return; }
+        if (this.selectedRegionId !== r.id) this._selectRegionOnly(r.id);
+      });
+      //阻止原生 dblclick 冒泡到画布：rect 双击已由手工判定处理
+      //（生成节点），冒泡会导致空白双击路径重复建节点。
+      rect.addEventListener('dblclick', ev => { ev.stopPropagation(); ev.preventDefault(); });
+      rect.addEventListener('contextmenu', onCtx);
+    });
+  },
+  //右键"编辑"（分区）：对分区标签进入原地改名（同双击标签）。
+  _beginRegionLabelEdit(regionId) {
+    const r = this._getRegionById(regionId);
+    if (!r || this.readOnly) return;
+    const labels = this._getEl('regionLabels');
+    const labelEl = labels ? labels.querySelector('[data-region-label="' + regionId + '"]') : null;
+    if (labelEl) this._enterRegionLabelEdit(r, labelEl);
+  },
+  //双击分区标签 → contenteditable 直接改名（与节点标题编辑一致）。
+  //保存写入 r.label；空文本回退原值；Enter/blur 提交，Esc 放弃。
+  //注意：此处不得触发 renderCanvas（会重建标签元素、中断编辑会话），
+  //选中状态直接写入，视觉刷新等编辑结束后的 renderCanvas 统一完成。
+  //_regionEditEl 记录会话中的标签元素：编辑期间画布空白单击、全局
+  //mouseup 守卫以及其它路径的整层重建都要先落定本会话（见 _endRegionLabelEdit）。
+  _enterRegionLabelEdit(region, labelEl) {
+    if (this.readOnly) return;
+    if (!labelEl || !document.contains(labelEl)) return;   //防过期引用
+    this._endRegionLabelEdit(true);   //先落定其它标签上的旧会话（无渲染）
+    this.selectedRegionId = region.id;
+    this.selectedNodeIds.clear();
+    this._clearConnSelection();
+    labelEl.contentEditable = 'plaintext-only';
+    if (labelEl.isContentEditable === false) labelEl.contentEditable = 'true';
+    labelEl.classList.add('editing');
+    this._regionEditEl = labelEl;
+    const self = this;
+    const orig = region.label || '';
+    const onBlur = () => { self._endRegionLabelEdit(true, labelEl); };
+    const onKey = ev => {
+      ev.stopPropagation();
+      if (ev.key === 'Enter') { ev.preventDefault(); labelEl.blur(); }
+      else if (ev.key === 'Escape') { ev.stopPropagation(); self._endRegionLabelEdit(false, labelEl); }
+    };
+    labelEl._regionLabelOnBlur = onBlur;
+    labelEl._regionLabelOnKey = onKey;
+    labelEl.addEventListener('blur', onBlur);
+    labelEl.addEventListener('keydown', onKey);
+    setTimeout(() => {
+      if (!labelEl.isConnected) return;   //等待期间标签已被重建则放弃
+      labelEl.focus();
+      const range = document.createRange();
+      range.selectNodeContents(labelEl);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }, 0);
+  },
+  //落定标签编辑会话。save = true 提交（空文本回退原值），false 放弃；
+  //el 省略时作用于当前会话元素（_regionEditEl）。不触发 renderCanvas：
+  //调用方负责后续渲染（blur 由元素移除触发时，整层重建已在途中）。
+  //元素已脱离文档（重建已发生）时只更新数据，不再触碰该元素。
+  _endRegionLabelEdit(save, el) {
+    const labelEl = el || this._regionEditEl;
+    if (!labelEl) return;
+    if (this._regionEditEl === labelEl) this._regionEditEl = null;
+    labelEl.removeEventListener('blur', labelEl._regionLabelOnBlur);
+    labelEl.removeEventListener('keydown', labelEl._regionLabelOnKey);
+    if (labelEl._regionLabelOnBlur) { delete labelEl._regionLabelOnBlur; }
+    if (labelEl._regionLabelOnKey) { delete labelEl._regionLabelOnKey; }
+    const wasEditing = labelEl.classList.contains('editing');
+    labelEl.removeAttribute('contenteditable');
+    labelEl.classList.remove('editing');
+    if (!labelEl.isConnected) return;   //元素已被重建移除：数据照常提交，渲染交给重建
+    const rid = labelEl.dataset.regionId;
+    const region = rid ? this._getRegionById(rid) : null;
+    if (!region) return;
+    const orig = region.label || '';
+    const val = (labelEl.textContent || '').trim();
+    if (wasEditing && save && val && val !== region.label) {
+      region.label = val;
+      this.saveCanvasSnapshot();
+    } else if (wasEditing && !save) {
+      labelEl.textContent = orig;
+    }
+  },
+  //分区单选并清除节点/连线选中（与节点单击对称）。
+  //已是当前选中分区时跳过重绘（保持 DOM 稳定，双击等连续事件不中断）。
+  _selectRegionOnly(id) {
+    const changed = this.selectedRegionId !== id || this.selectedNodeIds.size > 0 || this.selectedConnIds.size > 0;
+    this.selectedRegionId = id;
+    this.selectedNodeIds.clear();
+    this._clearConnSelection();
+    if (changed) this.renderCanvas();
+  },
+  //清除分区选中并同步 DOM（不整层重建；供节点/连线选择路径调用）。
+  _clearRegionSelection() {
+    if (this.selectedRegionId === null) return;
+    this.selectedRegionId = null;
+    const svg = this._getEl('regionsSvg');
+    if (svg) svg.querySelectorAll('.region-rect.selected').forEach(el => el.classList.remove('selected'));
+  },
   //连线的几何一站式处理：socket 锚点 + 控制点
   //（含平行偏移量）。实时渲染、导出、命中测试和
   //内联编辑器都从这单一工具派生曲线，因此
@@ -2557,6 +3608,14 @@ Object.assign(App, {
   },
   //单个 socket 侧的箭头基本方向、标签中点与完整箭头几何
   //（connArrowBaseX / connLabelPos / connArrows）已下沉至 Weave.Geom（M01）。
+  //连线图层级的组级继承样式：命中路径的 pointer-events=stroke 目标依赖组级
+  //strokeWidth 保持可点击（15×scale，最小 8px）；标签继承 fontSize 而非 CSS 的
+  //font-size（后者会破坏缩放）。常驻组（_ensureSvgLayers）与关联高亮抬升组
+  //（_hlSyncLiftStyles）共用，数值只在此处维护。
+  _styleConnLayer(linesEl, labelsEl) {
+    if (linesEl) linesEl.style.strokeWidth = Math.max(15 * this.scale, 8);
+    if (labelsEl) labelsEl.style.fontSize = 10 * this.scale + 'px';
+  },
   //SVG 图层栈（conn-group → 连线条 + 标签）及其常驻 DOM
   //映射和组级继承属性。由完整连线
   //渲染器和增量平移渲染器（可能先执行）共用。
@@ -2571,12 +3630,47 @@ Object.assign(App, {
     //会抛出异常——增量平移渲染器可能在任一次完整
     //_doRenderLines 填充它们之前就运行。
     if (!this._visPathByKey) { this._visPathByKey = new Map(); this._hitPathByKey = new Map(); this._labelByKey = new Map(); this._arrowPathByKey = new Map(); }
-    //命中路径的 pointer-events=stroke 目标依赖这个继承的
-    //strokeWidth 保持可点击（15×scale，最小 8px）；标签继承
-    //fontSize 而非 CSS 的 font-size（后者会破坏缩放）。
-    linesGroup.style.strokeWidth = Math.max(15 * this.scale, 8);
-    labelsGroup.style.fontSize = 10 * this.scale + 'px';
+    this._styleConnLayer(linesGroup, labelsGroup);
+    this._hlSyncLiftStyles();
     return { connGroup, linesGroup, labelsGroup };
+  },
+
+  // 关联高亮（按住 Alt 单击节点）：把高亮连线的全部元素（视觉路径 / 命中路径 /
+  // 箭头 / 标签）从常驻 conn-group 抬升到顶层连线 SVG（#linesSvgHl）的专用组，
+  // 使它们盖过其他连线、连线文字与全部节点，达到"置顶"。整体几何/交互不受影响：
+  // 元素保持原有 dataset 与监听器，命中路径与标签各自的 pointer-events 规则照常生效。
+  _hlLiftLayer() {
+    const svg = this._getEl('linesSvgHl');
+    if (!svg) return null;
+    let lift = svg.querySelector('.conn-group.hl-lift');
+    if (!lift) {
+      lift = Weave.Util.svgEl('g', { class: 'conn-group hl-lift' });
+      const lines = Weave.Util.svgEl('g', { class: 'lines' });
+      const labels = Weave.Util.svgEl('g', { class: 'labels' });
+      lift.appendChild(lines);
+      lift.appendChild(labels);
+      svg.appendChild(lift);
+    }
+    return lift;
+  },
+  // 同步抬升组的继承样式（命中路径宽度 / 标签字号），缩放（renderLines →
+  // _ensureSvgLayers）时保持与常驻组一致。
+  _hlSyncLiftStyles() {
+    const svg = this._getEl('linesSvgHl');
+    const lift = svg ? svg.querySelector('.conn-group.hl-lift') : null;
+    if (!lift) return;
+    this._styleConnLayer(lift.querySelector('.lines'), lift.querySelector('.labels'));
+  },
+  // 高亮连线 key → 该连线在抬升组内的目标子组（lines 放路径/命中/箭头，
+  // labels 放文字）。供 _renderConnection 的创建闭包路由。
+  _hlTargetsFor(k, linesGroup, labelsGroup) {
+    const isHl = !!(this.hlConnKeys && this.hlConnKeys.has(k));
+    const lift = isHl ? this._hlLiftLayer() : null;
+    return {
+      isHl,
+      lines: lift ? lift.querySelector('.lines') : linesGroup,
+      labels: lift ? lift.querySelector('.labels') : labelsGroup
+    };
   },
 
   //连接点锚定、自动控制点与完整箭头几何（getSocketAnchor /
@@ -2597,15 +3691,18 @@ Object.assign(App, {
     el.addEventListener('mousedown', e => { if (e.button !== 1) e.stopPropagation(); });
     el.addEventListener('click', e => {
       e.stopPropagation();
+      //点击选中连线属于画布操作：取消关联高亮（只走 renderLines，故在此显式清除）。
+      this._clearHighlight();
       if (e.ctrlKey || e.metaKey) {
         // Ctrl+单击可在多选选中/取消选中该连线。
         if (this.selectedConnIds.has(k)) this.selectedConnIds.delete(k);
-        else { this.selectedConnIds.add(k); this.selectedNodeIds.clear(); }
+        else { this.selectedConnIds.add(k); this.selectedNodeIds.clear(); this.selectedRegionId = null; }
       } else {
         // 普通单击：单选该连线。
         this.selectedConnIds.clear();
         this.selectedConnIds.add(k);
         this.selectedNodeIds.clear();
+        this.selectedRegionId = null;
       }
       this.renderLines();
       this._nodeElMap.forEach(n => { n.classList.remove('selected'); });
@@ -2624,7 +3721,7 @@ Object.assign(App, {
       //选中态优先于悬停态（与旧 CSS 规则顺序相同）。
       const vis = svgRoot.querySelector('.line[data-conn-key="' + k + '"]');
       if (vis) {
-        const sel = this.selectedConnIds.has(k);
+        const sel = this._connIsSel(k);
         vis.setAttribute('stroke-width', String((sel ? 4 : (on ? 3.5 : 2.5)) * this.scale));
       }
     };
@@ -2675,6 +3772,9 @@ Object.assign(App, {
       const fromNode = nodeMap.get(conn.from);
       const toNode = nodeMap.get(conn.to);
       if (!fromNode || !toNode) return;
+      //收起隐藏：任一 端点被收起 → 连线不渲染（seen 不含 k，孤儿
+      //清理会在下方移除其 DOM——收起/展开后由 renderCanvas 全量重建）。
+      if (this._isConnectionCollapseHidden(conn)) return;
       const g = this._getConnGeometry(conn, fromNode, toNode);
       // 如果贝塞尔曲线的包围盒完全位于视口 + 边距之外，则跳过。
       // 检查全部 4 个控制点（start、cp1、cp2、end）而不只检查端点。
@@ -2683,7 +3783,7 @@ Object.assign(App, {
       const bbT = Math.min(g.fromOut.y, g.fromOut.y + g.cp.c1y, g.toIn.y + g.cp.c2y, g.toIn.y);
       const bbB = Math.max(g.fromOut.y, g.fromOut.y + g.cp.c1y, g.toIn.y + g.cp.c2y, g.toIn.y);
       if (bbR < vpL - margin || bbL > vpR + margin || bbB < vpT - margin || bbT > vpB + margin) return;
-      this._renderConnection(conn, k, fromNode, toNode, this.selectedConnIds.has(k), s, linesGroup, labelsGroup);
+      this._renderConnection(conn, k, fromNode, toNode, this._connIsSel(k), s, linesGroup, labelsGroup);
       seen.add(k);
     });
 
@@ -2786,6 +3886,9 @@ Object.assign(App, {
   // _doRenderLines 与增量平移更新共同使用。更新持久化映射
   // （_visPathByKey / _hitPathByKey / _labelByKey）。
   _renderConnection(conn, k, fromNode, toNode, isSelected, s, linesGroup, labelsGroup) {
+    //关联高亮时（hlConnKeys 含 k）创建的元素直接进入抬升组，使新渲染的
+    //路径/标签/箭头从一开始就盖过其他连线；非高亮时目标组即常驻组。
+    const hlT = this._hlTargetsFor(k, linesGroup, labelsGroup);
     const geo = this._buildLinePath(conn, fromNode, toNode, s);
     const pathCls = geo.pathCls + (isSelected ? ' selected' : '');
 
@@ -2796,7 +3899,7 @@ Object.assign(App, {
     const path = this._reconcileEl(this._visPathByKey, k, () => {
       const el = Weave.Util.svgEl('path', { 'data-conn-key': k, d: geo.d, class: pathCls });
       if (geo.pathStyle) el.setAttribute('style', geo.pathStyle);
-      linesGroup.appendChild(el);
+      hlT.lines.appendChild(el);
       return el;
     });
     path.setAttribute('d', geo.d);
@@ -2813,7 +3916,7 @@ Object.assign(App, {
         stroke: 'transparent', 'pointer-events': 'stroke', opacity: '0'
       });
       el.style.cursor = 'pointer';
-      linesGroup.insertBefore(el, path);
+      hlT.lines.insertBefore(el, path);
       this._bindConnEl(el, k);
       return el;
     });
@@ -2827,7 +3930,7 @@ Object.assign(App, {
           'data-ck': k, 'text-anchor': 'middle', 'font-style': 'italic',
           'dominant-baseline': 'middle', class: 'line-label', fill: '#4a5568'
         });
-        labelsGroup.appendChild(el);
+        hlT.labels.appendChild(el);
         this._bindConnEl(el, k);
         return el;
       });
@@ -2850,8 +3953,8 @@ Object.assign(App, {
     const arr = this._reconcileEl(this._arrowPathByKey, k, () => {
       const a = [Weave.Util.svgEl('path', { 'data-conn-key': k, class: 'conn-arrow' }),
                  Weave.Util.svgEl('path', { 'data-conn-key': k, class: 'conn-arrow' })];
-      linesGroup.appendChild(a[0]);
-      linesGroup.appendChild(a[1]);
+      hlT.lines.appendChild(a[0]);
+      hlT.lines.appendChild(a[1]);
       return a;
     });
     arr[0].setAttribute('d', ar.dOut);
@@ -2871,6 +3974,47 @@ Object.assign(App, {
     this._removeReconciled(this._labelByKey, k);
     const arr = this._arrowPathByKey.get(k);
     if (arr) { arr.forEach(el => el.remove()); this._arrowPathByKey.delete(k); }
+  },
+
+  // ── 关联高亮 · 连线抬升 ──
+  // 把高亮连线（两端节点都在高亮集合）的所有元素抬到顶层连线 SVG 的抬升组。
+  // 已缓存到 _hlLiftPos：element → { group: 'lines'|'labels', index }，
+  // 供清除时按原索引归位（保持原相对顺序）。
+  _hlRecordPositions(el, group) {
+    if (!this._hlLiftPos) this._hlLiftPos = [];
+    this._hlLiftPos.push({ el, group, index: Array.prototype.indexOf.call(group.children, el) });
+  },
+  _hlLiftConnection(k, svg) {
+    const lift = this._hlLiftLayer();
+    if (!lift) return;
+    const liftLines = lift.querySelector('.lines');
+    const liftLabels = lift.querySelector('.labels');
+    const baseLines = svg.querySelector('.conn-group:not(.temp) .lines');
+    const baseLabels = svg.querySelector('.conn-group:not(.temp) .labels');
+    //连线元素按 视觉路径 → 命中路径 → 箭头 → 标签 原组顺序收集，避免悬停镜像错乱。
+    const vis = this._visPathByKey.get(k);
+    const hit = this._hitPathByKey.get(k);
+    const arrows = this._arrowPathByKey.get(k) || [];
+    const label = this._labelByKey.get(k);
+    //先记录全部索引，再移动（避免移动改变后续 indexOf）。
+    const recs = [];
+    const rec = (el, g) => { if (el && el.parentNode === g) recs.push({ el, g }); };
+    rec(vis, baseLines); rec(hit, baseLines); arrows.forEach(a => rec(a, baseLines)); rec(label, baseLabels);
+    recs.forEach(r0 => this._hlRecordPositions(r0.el, r0.g));
+    recs.forEach(r0 => {
+      const target = r0.g === baseLines ? liftLines : liftLabels;
+      target.appendChild(r0.el);
+    });
+  },
+  //把当前高亮集合里的所有在 DOM 中的连线抬升（调用前 hlConnKeys 已就绪）。
+  _hlLiftConns() {
+    if (!this.hlConnKeys || !this.hlConnKeys.size) return;
+    const svg = this._getEl('linesSvg');
+    if (!svg) return;
+    this._hlLiftPos = [];
+    for (const k of this.hlConnKeys) {
+      if (this._visPathByKey && this._visPathByKey.has(k)) this._hlLiftConnection(k, svg);
+    }
   },
 
   // ── 增量平移渲染的空间网格索引 ── 
@@ -2940,10 +4084,13 @@ Object.assign(App, {
   },
 
   // 节点的 display:none 只隐藏节点 DOM；连线由 SVG 独立管理
+  // 收起隐藏（_isCollapseHidden）与视口剔除相互独立：被收起的节点
+  // 绝不重新显示——即使它的单元格进入视口。收起状态由
+  // _updateNodeAppearance 同步设置，此处只叠加视口剔除。
   _updateNodeVisibility(visibleCells) {
     for (const node of this.canvasState.nodes) {
       const cell = this._nodeCellMap.get(node.id);
-      const vis = cell && visibleCells.has(cell);
+      const vis = cell && visibleCells.has(cell) && !this._isCollapseHidden(node.id);
       const el = this._nodeElMap.get(node.id);
       if (el) el.style.display = vis ? '' : 'none';
     }
@@ -2996,10 +4143,13 @@ Object.assign(App, {
           const fromNode = nodeMap.get(conn.from);
           const toNode = nodeMap.get(conn.to);
           if (!fromNode || !toNode) continue;
+          //收起隐藏的连线绝不随平移增量重新进入 DOM
+          //（完整的 _doRenderLines 会在收起/展开后清理孤儿）。
+          if (this._isConnectionCollapseHidden(conn)) continue;
           // 传入实时选中状态，使被剔除后重新进入
           // 视口的连线保持高亮（App.selectedConnIds 是
           // 事实来源）。
-          this._renderConnection(conn, k, fromNode, toNode, this.selectedConnIds.has(k), s, linesGroup, labelsGroup);
+          this._renderConnection(conn, k, fromNode, toNode, this._connIsSel(k), s, linesGroup, labelsGroup);
         }
       }
     }
@@ -3044,55 +4194,12 @@ Object.assign(App, {
       return;
     }
 
-    // ── 动画时序（毫秒）── 
-    //   base phase（0 → baseMs）：从起点到目标的线性滑动。
-    //   tail phase（baseMs → totalMs）：过冲——target → peak → target。
-    //   total = 150ms。时间用于给帧数组做索引，因此
-    //   无论 RAF 速率如何，实际播放时长始终为 150ms。
-    const baseMs = 100;
-    const tailMs = 50;
-    const totalMs = baseMs + tailMs;
-
     // ── 构建帧序列 ── 
-    // 以 1ms 粒度采样轨迹：足以胜任任何刷新
-    // 率，又足够小（150 帧 ≈ 2.4KB）。
-    const sampleStepMs = 1;
+    // 过冲吸附曲线（100ms 线性 + 50ms 过冲，见 Weave.Geom.snapFrames）。
+    // 帧为位移量：叠加到起点坐标即得绝对位置；末帧精确落在目标上。
     const dx = worldX - currentX;
     const dy = worldY - currentY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const ux = dx / dist;
-    const uy = dy / dist;
-    // 过冲峰值 = target + (start→target) 方向的 15%。
-    const overshootAmount = 0.15;
-    const peakX = worldX + ux * dist * overshootAmount;
-    const peakY = worldY + uy * dist * overshootAmount;
-    const peakRatio = 0.5; // 峰值位于尾段中点
-
-    const frames = [];
-    for (let tMs = 0; tMs <= totalMs; tMs += sampleStepMs) {
-      let x, y;
-      if (tMs < baseMs) {
-        const t = tMs / baseMs;
-        x = currentX + dx * t;
-        y = currentY + dy * t;
-      } else if (tMs < totalMs) {
-        const tailT = (tMs - baseMs) / tailMs; // 尾段内的 0..1
-        if (tailT <= peakRatio) {
-          const t = tailT / peakRatio;
-          x = worldX + (peakX - worldX) * t;
-          y = worldY + (peakY - worldY) * t;
-        } else {
-          const t = (tailT - peakRatio) / (1 - peakRatio);
-          x = peakX + (worldX - peakX) * t;
-          y = peakY + (worldY - peakY) * t;
-        }
-      } else {
-        // 最后一帧：精确落在目标上（避免浮点漂移）。
-        x = worldX;
-        y = worldY;
-      }
-      frames.push({ x: x, y: y });
-    }
+    const frames = Weave.Geom.snapFrames(dx, dy).map(f => ({ x: currentX + f.x, y: currentY + f.y }));
 
     // ── 后处理钩子 ── 
     // 额外的效果（抖动、暂停、蹦跳动作）会在此处应用到
@@ -3115,7 +4222,7 @@ Object.assign(App, {
     const animState = {
       frames: frames,            // 显式帧序列（即“脚本”）
       startTime: null,           // 在首个数据 tick 时设置
-      totalMs: totalMs,          // 动画总时长
+      totalMs: frames.length - 1, // 动画总时长（1ms 采样，帧数-1）
       targetX: worldX,
       targetY: worldY,
       cancelled: false,
@@ -3160,18 +4267,21 @@ Object.assign(App, {
       const idx = Math.floor(elapsed / sampleStepMs);
 
       if (idx >= anim.frames.length) {
-        //动画完成——把 node.x/y 固定到精确目标，标记为脏，让
+        //动画完成——把数据固定到精确目标，标记为脏，让
         //渲染流完成最终的 DOM 写入后，再清除两个引用。
-        if (anim.node) { anim.node.x = anim.targetX; anim.node.y = anim.targetY; }
+        if (anim.applyFrame) anim.applyFrame(anim.targetX, anim.targetY);
+        else if (anim.node) { anim.node.x = anim.targetX; anim.node.y = anim.targetY; }
         anim.dirty = true;
-        anim.el._snapAnim = null;
+        if (anim.el) anim.el._snapAnim = null;
         self._activeSnapAnims.delete(anim);
+        if (anim.onDone) anim.onDone();
         continue;
       }
 
       //从预计算的帧更新数据位置。
       const f = anim.frames[idx];
-      if (anim.node) { anim.node.x = f.x; anim.node.y = f.y; }
+      if (anim.applyFrame) anim.applyFrame(f.x, f.y);
+      else if (anim.node) { anim.node.x = f.x; anim.node.y = f.y; }
       anim.dirty = true;
     }
   },
@@ -3179,7 +4289,8 @@ Object.assign(App, {
   //渲染流时钟节拍（requestAnimationFrame，受 vsync 同步）：对每个脏
   //动画，把 node.x/y 同步到 el.style.transform，然后清除脏标记。把
   //多次更新合并成一次 renderLines()，让连线随之更新。本函数不会推进
-  //动画——那是数据流的职责。
+  //动画——那是数据流的职责。分区（SVG 属性元素）动画走 anim.commit：
+  //由提交回调自行写 DOM 并触发渲染。
   _snapRenderTick: function () {
     const self = App;
     self._snapRenderRaf = null;
@@ -3190,10 +4301,16 @@ Object.assign(App, {
       if (anim.cancelled) continue;
       if (!anim.dirty) continue;
 
-      const el = anim.el;
-      const x = anim.node ? anim.node.x : anim.targetX;
-      const y = anim.node ? anim.node.y : anim.targetY;
-      el.style.transform = T(x, y);
+      if (anim.commit) {
+        anim.commit();
+      } else {
+        const el = anim.el;
+        if (el) {
+          const x = anim.node ? anim.node.x : anim.targetX;
+          const y = anim.node ? anim.node.y : anim.targetY;
+          el.style.transform = T(x, y);
+        }
+      }
       anim.dirty = false;
       anyDirty = true;
     }
@@ -3231,7 +4348,26 @@ Object.assign(App, {
   /*── 画布事件 ──*/
   onCanvasMouseDown(e) {
     const container = this._getEl('canvasStage');
+    //分区创建：Region 模式 / Alt+左键。命中到已有分区时不进入创建（转移动）。
+    if (e.button === 0 && (this._regionModeActive || e.altKey)) {
+      //画分区（含 Alt+空白按下）是画布操作：取消关联高亮。
+      this._clearHighlight();
+      e.preventDefault();
+      const wp = this.getWorldPos(e.clientX, e.clientY);
+      const hitRegion = this._regionAtPoint(wp.x, wp.y);
+      if (hitRegion) { this.startRegionMove(e, hitRegion); return; }
+      if (this.canvasBoxState) { this.finalizeBoxSelect(); return; }
+      if (this.regionDragState) { this.finalizeRegionCreate(); return; }
+      const rect = container.getBoundingClientRect();
+      this.regionDragState = { startWorldX: wp.x, startWorldY: wp.y, curWorldX: wp.x, curWorldY: wp.y, rect };
+      this._applyRegionPreviewColor();
+      this._getEl('regionPreview').style.display = 'block';
+      this._updateRegionPreview(wp.x, wp.y);
+      return;
+    }
     if (e.button === 0 && e.shiftKey) {
+      //框选是画布操作：取消关联高亮。
+      this._clearHighlight();
       e.preventDefault();
       if (this.canvasBoxState) { this.finalizeBoxSelect(); return; }
       const wp = this.getWorldPos(e.clientX, e.clientY);
@@ -3250,12 +4386,315 @@ Object.assign(App, {
     }
   },
 
+  //分区创建预览的颜色取顶栏生成色，与创建完成后的 region.color 同源：
+  //边框为生成色，填充为生成色加透明度 7%（与 .region-preview 的初始值同参数）。
+  _applyRegionPreviewColor() {
+    const ov = this._getEl('regionPreview');
+    if (!ov) return;
+    const hex = this._resolveColor(this._selectedGenColor || 'blue').hex;
+    const { r, g, b } = Weave.Color.hexToRgb(hex);
+    ov.style.borderColor = hex;
+    ov.style.background = 'rgba(' + r + ',' + g + ',' + b + ',.07)';
+  },
+
+  //region 创建拖拽的实时预览（屏幕坐标）。
+  _updateRegionPreview(wx, wy) {
+    const d = this.regionDragState;
+    const ov = this._getEl('regionPreview');
+    if (!ov || !d) return;
+    const rect = d.rect;
+    const sx0 = d.startWorldX * this.scale + this.panX, sy0 = d.startWorldY * this.scale + this.panY;
+    const sx1 = wx * this.scale + this.panX, sy1 = wy * this.scale + this.panY;
+    const l = Math.min(sx0, sx1), t = Math.min(sy0, sy1);
+    ov.style.left = l + 'px'; ov.style.top = t + 'px';
+    ov.style.width = Math.abs(sx1 - sx0) + 'px'; ov.style.height = Math.abs(sy1 - sy0) + 'px';
+  },
+
+  //region 创建收尾（mouseup / 全局 mouseup）。新建分区的显式归属：
+  //- nodeIds：整框位于新框内的未归属节点（已归属其他分区的节点不动，
+  //  保持树形单归属；大框包小框时节点仍属小框）。
+  //- 整框位于新框内的现存分区 → parentId = 新框（嵌套由显式父链表达）。
+  //- 新框自身父 = 其中心点命中的最深现存分区（且不在新框圈入的子区链内）。
+  finalizeRegionCreate() {
+    if (!this.regionDragState) return;
+    const d = this.regionDragState;
+    const box = Weave.Geom.boxRect(d.startWorldX, d.startWorldY, d.curWorldX, d.curWorldY);
+    const minW = 40, minH = 30;
+    if (box.rx - box.lx >= minW && box.ry - box.ly >= minH) {
+      const color = this._selectedGenColor || 'blue';
+      //位置吸附受"分区位置对齐网格"控制，尺寸吸附受"分区大小对齐网格"控制。
+      const snapPos = v => this._snap(v, this._snapRegionPos);
+      const snapSize = v => this._snap(v, this._snapRegionSize);
+      const x = snapPos(box.lx), y = snapPos(box.ly);
+      const w = Math.max(minW, snapSize(box.rx - box.lx)), h = Math.max(minH, snapSize(box.ry - box.ly));
+      const region = {
+        id: this._genId('rg'),
+        label: this.t('misc.region'),
+        color,
+        x, y, w, h,
+        nodeIds: [], parentId: null
+      };
+      const lx = region.x, ly = region.y, rx = region.x + region.w, ry = region.y + region.h;
+      //已被其他分区显式收编的节点集合（保持原归属，不被新框夺走）。
+      const owned = new Set();
+      this.canvasState.regions.forEach(r => (r.nodeIds || []).forEach(nid => owned.add(nid)));
+      //被新框整体包含的现存分区 → 子分区；被圈节点的原父分区链要记住，
+      //避免新框中心命中这些子区时把自己挂成它们的子区（成环）。
+      const capturedRegionIds = new Set();
+      this.canvasState.regions.forEach(r => {
+        if (Weave.Geom.rectContains(lx, ly, rx, ry, r.x, r.y, r.w, r.h)) capturedRegionIds.add(r.id);
+      });
+      //显式归属：整节点位于新框内的未归属节点加入 nodeIds。
+      this.canvasState.nodes.forEach(n => {
+        if (this._isCollapseHidden(n.id)) return;
+        if (owned.has(n.id)) return;
+        const r2 = Weave.Geom.getNodeRect(n);
+        if (Weave.Geom.rectContains(lx, ly, rx, ry, r2.x, r2.y, r2.w, r2.h)) region.nodeIds.push(n.id);
+      });
+      //父分区：新框中心命中的最深现存分区；若命中分区是被新框圈入的子区
+      //（或其子孙），向祖先上移直到落在圈入集合之外。
+      let parent = this._regionAtPoint(x + w / 2, y + h / 2);
+      let guard = 0;
+      while (parent && capturedRegionIds.has(parent.id) && guard++ < 1000) {
+        parent = parent.parentId ? this._getRegionById(parent.parentId) : null;
+      }
+      region.parentId = parent ? parent.id : null;
+      //圈入的子分区改挂到新框下。
+      capturedRegionIds.forEach(cid => {
+        const cr = this._getRegionById(cid);
+        if (cr && cr.parentId !== region.id) cr.parentId = region.id;
+      });
+      this.canvasState.regions.push(region);
+      //框内节点被选中（视觉圈选语义），让用户看到哪些节点随分区移动。
+      this.selectedNodeIds.clear();
+      this.selectedConnIds.clear();
+      this.selectedRegionId = null;
+      region.nodeIds.forEach(nid => this.selectedNodeIds.add(nid));
+      this.saveCanvasSnapshot();
+      this.showToast(this.t('toast.regionCreated'), 'success');
+      this.renderCanvas();
+      this._regionJustCreated = true;
+      setTimeout(() => { this._regionJustCreated = false; }, 300);
+    }
+    this.regionDragState = null;
+    const ov = this._getEl('regionPreview');
+    if (ov) ov.style.display = 'none';
+  },
+
+  //分区移动拖拽：分区与其显式归属的节点（nodeIds，含全部后代分区节点）
+  //整体平移；子分区（parentId 树）随父区整体平移。拖拽成员在起始帧冻结
+  //（冻结成员节点 + 后代分区 + 起点坐标），每帧写入目标坐标（不累积位移）。
+  //onlyFrame = true 时仅移动分区框本身（右键"移动分区框"）。
+  startRegionMove(e, region, onlyFrame) {
+    if (this.readOnly) return;
+    //移动分区（整体/仅框体）是画布操作：取消关联高亮。
+    this._clearHighlight();
+    e.preventDefault(); e.stopPropagation();
+    this._hideResizeHandles();
+    this._selectRegionOnly(region.id);
+    const wp = this.getWorldPos(e.clientX, e.clientY);
+    //冻结成员节点：本分区 + 全部后代分区的显式 nodeIds 并集。
+    const members = [];
+    if (!onlyFrame) {
+      const nodeIds = this._regionAllNodeIds(region.id);
+      this.canvasState.nodes.forEach(n => {
+        if (nodeIds.has(n.id)) members.push({ id: n.id, origX: n.x, origY: n.y });
+      });
+    }
+    //后代子分区（parentId 树）：随父区整体平移，保持相对位置。
+    const nested = [];
+    if (!onlyFrame) {
+      const childIds = this._regionDescendantIds(region.id);
+      this.canvasState.regions.forEach(r => {
+        if (childIds.has(r.id)) nested.push({ id: r.id, origX: r.x, origY: r.y });
+      });
+    }
+    this.regionMoveState = {
+      regionId: region.id,
+      startWorldX: wp.x, startWorldY: wp.y,
+      origX: region.x, origY: region.y,
+      members, nested
+    };
+    const self = this;
+    let rafId = null;
+    let moved = false;
+    function onMove(ev) {
+      if (!self.regionMoveState) return;
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const ms = self.regionMoveState;
+        if (!ms) return;
+        const r = self._getRegionById(ms.regionId);
+        if (!r) return;
+        const wp2 = self.getWorldPos(ev.clientX, ev.clientY);
+        const dx = wp2.x - ms.startWorldX, dy = wp2.y - ms.startWorldY;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
+        //每个成员写目标坐标（orig + 当前位移），帧间不累积。
+        r.x = ms.origX + dx; r.y = ms.origY + dy;
+        for (const m of ms.members) {
+          const nodeObj = self._getNodeById(m.id);
+          if (nodeObj) { nodeObj.x = m.origX + dx; nodeObj.y = m.origY + dy; }
+        }
+        //嵌套子分区同步平移。
+        for (const nr of ms.nested) {
+          const regObj = self._getRegionById(nr.id);
+          if (regObj) { regObj.x = nr.origX + dx; regObj.y = nr.origY + dy; }
+        }
+        self.updateNodePositions();
+        self.renderLines();
+        self._applyRegionTransform(r);
+        ms.nested.forEach(nr => {
+          const regObj = self._getRegionById(nr.id);
+          if (regObj) self._applyRegionTransform(regObj);
+        });
+      });
+    }
+    function onUp() {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+      if (self.regionMoveState) {
+        const ms = self.regionMoveState;
+        const r = self._getRegionById(ms.regionId);
+        if (r) {
+          //吸附目标（受"分区位置对齐网格"设置控制）：开启时取 20px 网格对齐位，
+          //关闭时 _snap 回落为取整（像素级，不跳格）。
+          const sx = self._snap(r.x, self._snapRegionPos), sy = self._snap(r.y, self._snapRegionPos);
+          const ddx = sx - r.x, ddy = sy - r.y;
+          if (ddx || ddy) {
+            //整组（主区 + 嵌套子区 + 成员节点）统一做吸附动画；
+            //动画完成回调里保存快照，使撤销一步回到拖拽前。
+            const base = [];
+            base.push({ kind: 'region', id: r.id, obj: r, x0: r.x, y0: r.y });
+            ms.nested.forEach(nr => {
+              const regObj = self._getRegionById(nr.id);
+              if (regObj) base.push({ kind: 'region', id: nr.id, obj: regObj, x0: regObj.x, y0: regObj.y });
+            });
+            ms.members.forEach(m => {
+              const nodeObj = self._getNodeById(m.id);
+              if (nodeObj) base.push({ kind: 'node', id: m.id, obj: nodeObj, x0: nodeObj.x, y0: nodeObj.y });
+            });
+            self.regionMoveState = null;
+            self._animateRegionSnap(base, ddx, ddy);
+            const anim = self._regionSnapAnim;
+            if (anim) {
+              anim.onDone = () => {
+                if (self._regionSnapAnim === anim) self._regionSnapAnim = null;
+                self.saveCanvasSnapshot();
+                self.renderCanvas({ center: false });
+              };
+            }
+            if (moved) self._markRegionDragFinished();
+            cleanup();
+            return;
+          }
+        }
+        self.regionMoveState = null;
+        self.saveCanvasSnapshot();
+        self.renderCanvas({ center: false });
+      }
+      if (moved) self._markRegionDragFinished();
+      cleanup();
+    }
+    const cleanup = this._bindDragListeners(onMove, onUp);
+  },
+  //分区拖拽（整体移动）结束后会触发一次浏览器 click——它会落入画布空白
+  //单击路径并清除刚拖拽出的选中。与节点拖拽同规则：置位一次性守卫，
+  //吞掉接下来的一次画布单击（自动过期，迟到或缺失的 click 不影响后续）。
+  _markRegionDragFinished() {
+    this._dragJustFinished = true;
+    setTimeout(() => { this._dragJustFinished = false; }, 300);
+  },
+  _getRegionById(id) {
+    return this.canvasState.regions.find(r => r.id === id);
+  },
+  //拖拽分区移动中：更新该分区 SVG 矩形几何与 HTML 标签的位置
+  //（不重建整层，避免事件重绑）。
+  _applyRegionTransform(r) {
+    const s = this.scale;
+    const padX = 8 * s;
+    const fs = REGION_LABEL_FONT * s;
+    const svg = this._getEl('regionsSvg');
+    if (svg) {
+      const els = svg.querySelectorAll('[data-region-id="' + r.id + '"]');
+      els.forEach(el => {
+        if (el.classList.contains('region-rect')) {
+          el.setAttribute('x', r.x * s); el.setAttribute('y', r.y * s);
+          el.setAttribute('width', r.w * s); el.setAttribute('height', r.h * s);
+          el.setAttribute('rx', 10 * s); el.setAttribute('ry', 10 * s);
+        }
+      });
+    }
+    const labels = this._getEl('regionLabels');
+    if (labels) {
+      const lbl = labels.querySelector('[data-region-label="' + r.id + '"]');
+      if (lbl) lbl.style.transform = T(r.x * s + padX, r.y * s + fs * 0.75);
+    }
+  },
+  //取消进行中的分区整组吸附动画（数据同步到当前帧目标，防渲染中断）。
+  _cancelRegionSnapAnim() {
+    const anim = this._regionSnapAnim;
+    if (!anim) return;
+    this._regionSnapAnim = null;
+    anim.cancelled = true;
+    this._activeSnapAnims.delete(anim);
+  },
+  //分区整组吸附动画：把拖拽释放后的整组（主区 + 嵌套子区 + 成员节点）
+  //从当前视觉位置平移到吸附目标，复用 M07 的帧流引擎（240Hz 数据流 +
+  //rAF 渲染流）。帧位移曲线与节点吸附相同：100ms 线性滑动 + 50ms 过冲
+  //尾段（超 15% 回弹）。base = [{obj, x0, y0}]（x0/y0 为拖后未吸附坐标），
+  //ddx/ddy 为吸附修正向量；targetX/Y = ddx/ddy（帧值即位移增量）。
+  _animateRegionSnap(base, ddx, ddy) {
+    this._cancelRegionSnapAnim();
+    if (base.length === 0) return;
+    const dx = ddx, dy = ddy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 0.01) return;
+    //过冲吸附曲线同节点动画（Weave.Geom.snapFrames），位移帧直接作用于整组。
+    const frames = Weave.Geom.snapFrames(dx, dy);
+    const self = this;
+    //数据流：按帧位移写整组坐标。
+    const applyFrame = (fx, fy) => {
+      base.forEach(b => {
+        const o = b.obj;
+        if (!o) return;
+        o.x = b.x0 + fx; o.y = b.y0 + fy;
+      });
+    };
+    //渲染流：写分区 SVG 几何 + 节点 DOM transform + 连线。
+    const commit = () => {
+      base.forEach(b => {
+        if (b.kind === 'region') {
+          const reg = self._getRegionById(b.id);
+          if (reg) self._applyRegionTransform(reg);
+        } else if (b.kind === 'node') {
+          const el = self._nodeElMap.get(b.id);
+          const o = self._getNodeById(b.id);
+          if (el && o) el.style.transform = T(o.x, o.y);
+        }
+      });
+    };
+    //起始帧先把数据写到 x0/y0（拖后位置），动画从该位置开始。
+    applyFrame(0, 0);
+    const animState = {
+      frames, startTime: null, totalMs: frames.length - 1,
+      targetX: dx, targetY: dy,
+      cancelled: false, dirty: false,
+      applyFrame, commit, el: null, node: null
+    };
+    this._regionSnapAnim = animState;
+    this._activeSnapAnims.add(animState);
+    if (this._snapDataInterval === null) this._snapDataInterval = setInterval(this._snapDataTick, 1000 / this._snapDataHz);
+    if (this._snapRenderRaf === null) this._snapRenderRaf = requestAnimationFrame(this._snapRenderTick);
+  },
+
   finalizeBoxSelect() {
     if (!this.canvasBoxState) return;
     const box = Weave.Geom.boxRect(this.canvasBoxState.startX, this.canvasBoxState.startY, this.canvasBoxState.curX, this.canvasBoxState.curY);
     const lx = box.lx, ly = box.ly, rx = box.rx, ry = box.ry;
     this.selectedNodeIds.clear();
+    this.selectedRegionId = null;
     this.canvasState.nodes.forEach(n => {
+      if (this._isCollapseHidden(n.id)) return;   //收起隐藏节点不参与框选
       const { x: nx, y: ny, w, h } = Weave.Geom.getNodeRect(n);
       if (nx + w >= lx && nx <= rx && ny + h >= ly && ny <= ry) this.selectedNodeIds.add(n.id);
     });
@@ -3270,6 +4709,7 @@ Object.assign(App, {
       const fn = boxNodeMap.get(conn.from);
       const tn = boxNodeMap.get(conn.to);
       if (!fn || !tn) return;
+      if (this._isConnectionCollapseHidden(conn)) return;   //收起隐藏连线不参与框选
       const g = this._getConnGeometry(conn, fn, tn);
       const p0 = g.fromOut, p1 = { x: g.fromOut.x + g.cp.c1x, y: g.fromOut.y + g.cp.c1y };
       const p2 = { x: g.toIn.x + g.cp.c2x, y: g.toIn.y + g.cp.c2y }, p3 = g.toIn;
@@ -3474,12 +4914,23 @@ Object.assign(App, {
         //这会打扰悬停/过渡状态，并使节点删除
         //的"X"瞬间消失，而不是像普通的鼠标离开那样淡出。
         if (e.button !== 0) return;
-        //Shift+左键属于框选范围：让事件冒泡到
-        //画布处理器，而不是启动节点拖拽。
-        if (e.shiftKey) return;
         const nodeEl = e.target.closest('.node');
         if (!nodeEl) return;
         const nodeId = nodeEl.dataset.nodeId;
+        //按住绑定的修饰键（默认 Alt，可在设置中自定义，动作 hlNode）
+        //单击节点 = 关联高亮：不改变选中、不进入拖拽，只把该节点与
+        //直接关联的节点/连线/文字高亮并置顶。置于 Shift 放行之前，
+        //保证即使绑定的是 Shift/Ctrl 也能命中（空白处 Shift 框选不受影响）。
+        if (App._hlModifierMatch(e)) {
+          e.preventDefault(); e.stopPropagation();
+          App._highlightAtNode(nodeId, e);
+          return;
+        }
+        //Shift+左键（未命中高亮绑定）属于框选范围：让事件冒泡到
+        //画布处理器，而不是启动节点拖拽。
+        if (e.shiftKey) return;
+        //未命中高亮绑定的节点按下 = 选中/拖拽等画布操作：取消关联高亮。
+        App._clearHighlight();
         if (e.ctrlKey || e.metaKey) { e.stopPropagation(); }
         const isTextArea = (e.target.closest('.node-header') ||
           (e.target.closest('.node-body') && !e.target.closest('.node-clear')) ||
@@ -3543,6 +4994,58 @@ Object.assign(App, {
     }
   },
 
+  // ── 关联高亮（按住 Alt 单击节点）──
+  //仅一层：高亮集合 = 被点节点 + 直接邻居（两端连线关系），以及
+  //两端都在集合内的连线（含其文字标签）。视觉复用默认选中效果
+  //（.node.selected / .line.selected 等），但不写入任何选中集合——
+  //"判定不是选中"。节点与连线/文字分别在自己的层内置顶，保持抬升前
+  //相对顺序。视图操作（拖动视角、缩放）保留高亮；其他画布操作经
+  //renderCanvas/saveCanvasSnapshot/连线点击等入口清除。
+  _highlightAtNode(nodeId) {
+    const node = this._getNodeById(nodeId);
+    if (!node) return;
+    //替换高亮：先还原上一次的视觉状态（类名 / 叠放 / 清晰层 / 连线抬升），
+    //否则旧集合的节点会保留 selected 与清晰层归属。
+    this._clearHighlight();
+    //初次置顶时记录全序快照（此后替换集合仍以最初顺序为还原基准）。
+    if (!this._hlBaseOrder) this._hlBaseOrder = this._nodeZOrder.slice();
+    const nodes = new Set([nodeId]);
+    const nodeSet = new Set(this.canvasState.nodes.map(n => n.id));
+    //一层邻居：与 nodeId 有连线关系的全部节点（含隐藏的收起节点——
+    //它们不渲染但保留关系，视觉上不受影响）。
+    this.canvasState.connections.forEach(c => {
+      if (c.from === nodeId && nodeSet.has(c.to)) nodes.add(c.to);
+      else if (c.to === nodeId && nodeSet.has(c.from)) nodes.add(c.from);
+    });
+    //连线集合 = 两端都 ∈ nodes（即被点节点的直接连线，以及同层内连线）。
+    const connKeys = new Set();
+    this.canvasState.connections.forEach(c => {
+      if (nodes.has(c.from) && nodes.has(c.to)) connKeys.add(c.id);
+    });
+    this.hlNodeIds = nodes;
+    this.hlConnKeys = connKeys;
+    //节点层内置顶：复用既有"节点置顶"操作 _bringToFront（按传入顺序稳定
+    //移至 _nodeZOrder 末尾并 _applyZOrder），不调 renderCanvas（会先清高亮）。
+    this._bringToFront(this._nodeZOrder.filter(id => nodes.has(id)));
+    //节点类名：直接加 selected（与选中视觉一致），不动 selectedNodeIds。
+    this._nodeElMap.forEach((el, id) => {
+      if (nodes.has(id)) el.classList.add('selected', 'hl-on');
+    });
+    //移入清晰层，按 _nodeZOrder 顺序追加以保持抬升前的相对叠放。
+    const hlLayer = this._getEl('nodeLayerHl');
+    if (hlLayer) {
+      this._nodeZOrder.forEach(id => {
+        if (!nodes.has(id)) return;
+        const el = this._nodeElMap.get(id);
+        if (el) hlLayer.appendChild(el);
+      });
+    }
+    this._hlBlur(true);
+    //连线抬升 + 选中视觉刷新（renderLines 走 rAF，不触发 renderCanvas）。
+    this._hlLiftConns();
+    this.renderLines();
+  },
+
   // ── 节点拖拽 ── 
   startNodeDrag(e, nodeId) {
     if (this.readOnly) return;
@@ -3564,6 +5067,8 @@ Object.assign(App, {
     }
 
     if (!this.selectedNodeIds.has(nodeId)) this.selectedNodeIds.clear();
+    //抓取节点时分区选中随之让位（region 与节点选择互斥）。
+    this._clearRegionSelection();
 
     const nodeEl = this._nodeElMap.get(nodeId);
     if (!nodeEl) return;
@@ -3622,6 +5127,8 @@ Object.assign(App, {
 
     function onUp() {
       let positionChanged = false;
+      //拖拽节点列表在 dragState 置空前捕获（供落位后归属同步）。
+      const draggedIds = self.dragState && self.dragState.nodes ? self.dragState.nodes.map(n => n.id) : [];
       if (dragRafId) { cancelAnimationFrame(dragRafId); dragRafId = null; }
       if (self.dragState && self.dragState.nodes) {
         for (const n of self.dragState.nodes) {
@@ -3669,7 +5176,17 @@ Object.assign(App, {
       self.isDragging = false;
       self._nodeElMap.forEach(el => { el.style.transition = ''; });
       self.renderLines();
-      if (positionChanged) self.saveCanvasSnapshot();  //只在真正移动过时才保存
+      //节点落位后同步显式归属：拖入分区自动加入 nodeIds、拖出自动移除。
+      //在 saveCanvasSnapshot 之前做（归属变化随本次移动一并入栈）。
+      if (positionChanged) {
+        const movedIds = draggedIds;
+        let membershipChanged = false;
+        movedIds.forEach(nid => {
+          if (self._syncNodeRegionMembership(nid)) membershipChanged = true;
+        });
+        if (membershipChanged) self.renderCanvas({ center: false });
+        self.saveCanvasSnapshot();
+      }
       //在空白画布上结束的真实拖拽会产生一次浏览器 click，它
       //会清除刚拖拽出的选中——吞掉接下来的一次画布
       //单击（自动过期，因此迟到或缺失的 click 不会吃掉后面的一次）。
@@ -3697,11 +5214,15 @@ Object.assign(App, {
   //之内、靠近某个兼容的 socket？纯几何判断，不做 DOM 命中测试。
 
   startSocketDrag(e, nodeId, dir, colorClass) {
+    //从连接点按下（建线 / 收起点点击）是画布操作：取消关联高亮。
+    this._clearHighlight();
     e.preventDefault();
     const nodeEl = this._nodeElMap.get(nodeId);
     if (!nodeEl) return;
     const fromSocket = nodeEl.querySelector('.socket.' + dir);
-    if (fromSocket) fromSocket.classList.add('dragging');
+    //注意：此处不立即加 dragging 类——拖拽判定在 onMove（位移超容差）
+    //时进行。点击（未拖拽）场景若 mousedown 即加 dragging，socket 会
+    //瞬间放大 1.6×；待 mouseup 才恢复。改为真拖拽时才进入 dragging 态。
 
     const node = this._getNodeById(nodeId);
     if (!node) return;
@@ -3709,23 +5230,67 @@ Object.assign(App, {
     const wp = this.getWorldPos(e.clientX, e.clientY);
     this.socketDragState = {
       nodeId, dir, colorClass, node,
-      toWorldX: wp.x, toWorldY: wp.y
+      toWorldX: wp.x, toWorldY: wp.y,
+      //点击 vs 拖拽判定基准（屏幕像素）：mousedown → mouseup 位移
+      //≤ SOCKET_CLICK_TOLERANCE 视为"点击"（输出连接点收起/展开切换），
+      //超过则按原有拖拽建线流程处理。
+      startClientX: e.clientX, startClientY: e.clientY
     };
     const self = this;
 
     function onMove(e2) {
       if (!self.socketDragState) return;
+      const sd = self.socketDragState;
+      //真拖拽判定：位移超过点击容差 → 进入 dragging 态（socket 放大，徽标保持显示）。
+      //在此之前（点击候选）保持正常外观，避免 mousedown 瞬间的样式闪烁。
+      if (fromSocket && !fromSocket.classList.contains('dragging') &&
+          (Math.abs(e2.clientX - sd.startClientX) > SOCKET_CLICK_TOLERANCE ||
+           Math.abs(e2.clientY - sd.startClientY) > SOCKET_CLICK_TOLERANCE)) {
+        fromSocket.classList.add('dragging');
+      }
       const wp = self.getWorldPos(e2.clientX, e2.clientY);
-      self.socketDragState.toWorldX = wp.x;
-      self.socketDragState.toWorldY = wp.y;
+      sd.toWorldX = wp.x;
+      sd.toWorldY = wp.y;
       const svg = document.getElementById('linesSvg');
       if (svg) self._renderTempLine(svg);
     }
 
-    function onUp() {
+    function onUp(e2) {
       if (self.socketDragState) {
         const sd = self.socketDragState;
-        //连线测试：终点是否落在
+        //手势收尾：移除 dragging 类、清状态、重建临时线。各分支共用。
+        const endDrag = () => {
+          if (fromSocket) fromSocket.classList.remove('dragging');
+          self.socketDragState = null;
+          self.renderLines();
+        };
+        //窗口 blur 事件（e2 无坐标）永远不算点击（按"已移动"处理），
+        //也不执行连线测试——最后记录的 mousemove 坐标可能停在某
+        //socket 上，失焦即松键会误建连线（真实鼠标已离开页面，
+        //不该产生连接）。blur 只负责清理手势状态。
+        if (!e2 || typeof e2.clientX !== 'number') {
+          endDrag();
+          cleanup();
+          return;
+        }
+        //收起的点击判定：仅输出连接点，且确为"点击"。
+        const isClick =
+          Math.abs(e2.clientX - sd.startClientX) <= SOCKET_CLICK_TOLERANCE &&
+          Math.abs(e2.clientY - sd.startClientY) <= SOCKET_CLICK_TOLERANCE;
+        if (isClick) {
+          //先清手势状态再切换：renderCanvas 重建 DOM，避免旧的 dragging
+          //类 / 临时线残留在新节点元素上。
+          endDrag();
+          cleanup();
+          if (sd.dir === 'out') {
+            //点在输出连接点上（未拖拽）→ 收起 / 展开切换。
+            self.toggleCollapse(sd.nodeId);
+          }
+          //输入连接点上"点一下"：无动作（与旧行为一致——无法命中其他
+          //节点的 socket）。
+          return;
+        }
+        //拖拽：连线测试——终点是否落在
         //另一个节点上某个兼容 socket 的 SOCKET_HIT_RADIUS 之内？
         const hit = self._findSocketHit(sd.toWorldX, sd.toWorldY, sd.nodeId, sd.dir);
         if (hit) {
@@ -3738,11 +5303,11 @@ Object.assign(App, {
             const srcNode = self._getNodeById(fromId);
             self.canvasState.connections.push(self._createConnection(fromId, toId, { mirrored: !!(srcNode && srcNode.mirrored) }));
             self.saveCanvasSnapshot();
+            //连线拓扑变化 → 输出连接点徽标重算（本路径不重建节点 DOM）。
+            self._refreshFoldBadges();
           }
         }
-        if (fromSocket) fromSocket.classList.remove('dragging');
-        self.socketDragState = null;
-        self.renderLines();
+        endDrag();
       }
       cleanup();
     }
@@ -3757,6 +5322,7 @@ Object.assign(App, {
     const r = SOCKET_HIT_RADIUS;
     for (const n of this.canvasState.nodes) {
       if (n.id === excludeNodeId) continue;
+      if (this._isCollapseHidden(n.id)) continue;   //收起隐藏节点不可作为连线目标
       const inP = Weave.Geom.getSocketAnchor(n, 'in');
       const outP = Weave.Geom.getSocketAnchor(n, 'out');
       if (requireDir !== 'in') {
@@ -3779,10 +5345,10 @@ Object.assign(App, {
     //在节点外部结束的文本拖拽选择之后跟随的单击
     //（mousedown 发生在内联编辑器中，mouseup 发生在空白画布上）
     //是选择文本的副产品，而不是真正的空白单击——忽略它，以
-    //保住正在进行的内联编辑。
+    //保住正在进行的内联编辑（分区标签编辑同此规则）。
     if (this._suppressNextCanvasClick) {
       this._suppressNextCanvasClick = false;
-      if (this._inlineEditTarget) return;
+      if (this._inlineEditTarget || this._regionEditEl) return;
     }
     //在真实节点拖拽之后紧跟的单击同样如此：它可能会清除
     //用户刚刚拖拽出来的选中。
@@ -3791,15 +5357,22 @@ Object.assign(App, {
       return;
     }
     if (this._boxSelectJustCompleted) { this._boxSelectJustCompleted = false; return; }
+    if (this._regionJustCreated) { this._regionJustCreated = false; return; }
+    //平移（拖动视角）松手补发的 click 不得清除高亮/选中。
+    if (this._panJustFinished) { this._panJustFinished = false; return; }
     const target = e.target;
     if (target.closest('.node') || target.closest('.coord') || target.closest('.sel-overlay') || target.closest('.curve-handles')) return;
     if (this._curveEditState) { this._exitCurveEdit(); }
     if (this._dblClickTarget) { clearTimeout(this._dblClickTarget.timerId); this._dblClickTarget = null; }
+    //空白单击退出分区框的仅移动/调整大小模式。
+    this._exitRegionResize();
+    this._exitRegionFrameMove();
     //真正的空白单击会结束内联编辑——先保存，这样下面的渲染
     //绝不会用过期的节点数据覆盖已编辑的文本。
     if (this._inlineEditTarget) this.saveInlineEdit();
     this._hideResizeHandles();
     this.selectedNodeIds.clear();
+    this.selectedRegionId = null;
     this._clearConnSelection();
     this.renderCanvas();
   },
@@ -3825,14 +5398,22 @@ Object.assign(App, {
       paste:     { anyMod: true,  shift: false, alt: false, key: 'v' },
       autoModal: { anyMod: true,  shift: false, alt: false, key: 'e' },
       chrome:    { anyMod: true,  shift: false, alt: false, key: 'h' },
-      delete:    { anyMod: false, shift: false, alt: false, key: 'delete' }
+      region:    { anyMod: false, shift: true,  alt: false, key: 'r' },
+      delete:    { anyMod: false, shift: false, alt: false, key: 'delete' },
+      //关联高亮："按住某修饰键 + 点击节点"。key:'any' 表示只需修饰键匹配，
+      //不限定同时按下的主键（纯修饰键手势，参与鼠标点击判定而非键盘命令）。
+      hlNode:    { anyMod: false, ctrl: false, meta: false, alt: true, shift: false, key: 'any' }
     };
     const saved = this._settings.get('keybinds');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
         for (const k of Object.keys(parsed)) {
-          if (defs[k] && parsed[k] && parsed[k].key) defs[k] = parsed[k];
+          const pk = parsed[k];
+          if (!defs[k] || !pk || !pk.key) continue;
+          //哨兵 'any'（纯修饰键、无主键）只对鼠标手势动作（当前仅 hlNode）有效：
+          //其余动作即使存档里出现也拒绝合并，避免"看似绑定实则永不触发"。
+          if (k === 'hlNode' || pk.key !== 'any') defs[k] = pk;
         }
       } catch (err) { /* 忽略损坏的存档 */ }
     }
@@ -3860,9 +5441,19 @@ Object.assign(App, {
     if (b.meta) parts.push('Cmd');
     if (b.alt) parts.push('Alt');
     if (b.shift) parts.push('Shift');
+    //纯修饰键手势（key 哨兵 'any'，无主键）：只显示修饰键，如 "Alt"。
     const k = b.key;
-    parts.push(k.length === 1 ? k.toUpperCase() : k);
+    if (k !== 'any') parts.push(k.length === 1 ? k.toUpperCase() : k);
     return parts.join('+');
+  },
+  //关联高亮触发键匹配：当前按下的修饰键集合 == hlNode 绑定（key 忽略）。
+  //注意与 _keyMatch 不同——它看修饰键按下状态而非某主键命令。
+  _hlModifierMatch(e) {
+    const b = this._keybinds && this._keybinds.hlNode;
+    if (!b) return false;
+    if (b.anyMod) return !!(e.ctrlKey || e.metaKey);   //语义兼容（默认未用）
+    return !!e.ctrlKey === !!b.ctrl && !!e.metaKey === !!b.meta &&
+           !!e.altKey === !!b.alt && !!e.shiftKey === !!b.shift;
   }
 });
 
@@ -3918,13 +5509,17 @@ Object.assign(App, {
   },
 
   clearAllNodes() {
-    if (this.readOnly || this.canvasState.nodes.length === 0) return;
+    if (this.readOnly || (this.canvasState.nodes.length === 0 && this.canvasState.regions.length === 0)) return;
     if (!confirm('将清空页面节点信息，是否继续？')) return;
     this.canvasState.nodes = [];
     this.canvasState.connections = [];
+    this.canvasState.regions = [];
     this.selectedNodeIds.clear();
     //连线已全部删除——任何连线选中/曲线编辑也必须一并清除。
     this.selectedConnIds.clear();
+    this.selectedRegionId = null;
+    this._regionResizeId = null;
+    this._frameMoveRegionId = null;
     this._curveEditState = null;
     this._removeCurveHandles();
     this._destroyNodeEls([...this._nodeElMap.keys()]);
@@ -3963,6 +5558,9 @@ Object.assign(App, {
     this.selectedNodeIds.clear();
     this.selectedNodeIds.add(id);
     this._nodeZOrder.push(id);
+    //新建节点落位后同步分区归属（双击分区内建节点 → 加入该分区 nodeIds，
+    //否则移动分区时该节点不随动）。saveCanvasSnapshot 之前做。
+    this._syncNodeRegionMembership(id);
     this.saveCanvasSnapshot();
     this.renderCanvas();
     if (this._autoOpenModal) this.openNodeModal(id);
@@ -4067,7 +5665,10 @@ Object.assign(App, {
 
   /*全选节点*/
   selectAllNodes() {
-    this.canvasState.nodes.forEach(n => this.selectedNodeIds.add(n.id));
+    this.canvasState.nodes.forEach(n => { if (!this._isCollapseHidden(n.id)) this.selectedNodeIds.add(n.id); });
+    this._exitRegionResize();
+    this._exitRegionFrameMove();
+    this.selectedRegionId = null;
     this.renderCanvas();
     if (this.canvasState.nodes.length === 0) this.showToast(this.t('toast.noNodes'), 'info');
     else this.showToast(this.t('toast.selectedAll', { n: this.canvasState.nodes.length }));
@@ -4081,11 +5682,21 @@ Object.assign(App, {
   removeNodes(ids) {
     if (this.readOnly) return;
     const idSet = new Set(ids);
+    //收起记录清理（在节点过滤前）：被删除节点若是收起根 → 按 根最后坐标 +
+    //保存偏移 释放其隐藏节点（保持相对位置语义）；所有剩余记录剔除引用
+    //已删除 id 的条目；记录清空则整体删除（记录随根对象消失）。
+    this._pruneCollapseOnRemove(idSet);
     const before = this.canvasState.nodes.length;
     this.canvasState.nodes = this.canvasState.nodes.filter(n => !idSet.has(n.id));
     const removed = before - this.canvasState.nodes.length;
     if (removed === 0) return;
     this.canvasState.connections = this.canvasState.connections.filter(c => !idSet.has(c.from) && !idSet.has(c.to));
+    //删除节点从所有分区的显式 nodeIds 中剔除。
+    this.canvasState.regions.forEach(r => {
+      if (Array.isArray(r.nodeIds) && r.nodeIds.some(nid => idSet.has(nid))) {
+        r.nodeIds = r.nodeIds.filter(nid => !idSet.has(nid));
+      }
+    });
     //丢弃引用了已删除节点的选中/曲线编辑。
     this._dropSelectionIfGone(idSet);
     this._clearCurveEditIfNodesGone(idSet);
@@ -4096,6 +5707,100 @@ Object.assign(App, {
     this.renderCanvas();
     if (removed === 1) { this.showToast(this.t('toast.nodeDeleted'), 'warning'); }
     else { this.showToast(this.t('toast.nodesDeleted', { n: removed }), 'warning'); }
+  },
+  /*删除节点前的收起记录清理（removeNodes 在过滤节点前调用，保证根坐标仍有效）：
+      1. 被删除节点是收起根 → 隐藏节点不在删除集内时，按 根最后坐标 + 保存偏移
+         恢复位置（随后根与其记录一并消失，隐藏节点恢复可见）；
+      2. 剩余根节点的记录：剔除引用已删除 id 的条目；记录清空则整体删除。
+      派生缓存（_collapseDerived）在本函数随后的 saveCanvasSnapshot 中失效。*/
+  _pruneCollapseOnRemove(idSet) {
+    for (const n of this.canvasState.nodes) {
+      if (idSet.has(n.id) && n.collapse && Array.isArray(n.collapse.hidden)) {
+        //1) 释放被删根的隐藏节点（根此刻仍可定位）。
+        for (const h of n.collapse.hidden) {
+          if (idSet.has(h.id)) continue;
+          const t = this._getNodeById(h.id);
+          if (t) { t.x = n.x + h.dx; t.y = n.y + h.dy; }
+        }
+      }
+      //2) 清理剩余记录（被删根的记录随对象消失，无需处理）。
+      if (idSet.has(n.id) || !n.collapse || !Array.isArray(n.collapse.hidden)) continue;
+      const alive = n.collapse.hidden.filter(h => !idSet.has(h.id) && h.id !== n.id && !!this._getNodeById(h.id));
+      if (alive.length !== n.collapse.hidden.length) {
+        if (alive.length) n.collapse = { hidden: alive };
+        else delete n.collapse;
+      }
+    }
+  },
+
+  /*── 收起 / 展开节点串 ──
+    交互：输出连接点常态显示徽标（可收起 − / 已收起 +），
+    左键点击（无拖拽位移）切换收起 / 展开；拖拽仍用于创建连线。
+    数据模型：收起根节点挂 collapse = { hidden: [{id, dx, dy}, ...] }，
+    dx/dy 为收起瞬间隐藏节点相对根节点的像素偏移——根节点移动后展开，
+    隐藏节点仍按 root + 偏移恢复正确相对位置。
+    嵌套：收起时沿连线方向收集全部后续节点（闭包，Weave.Geom.
+    collapseClosure），链中其他根节点的 collapse 记录不做特殊处理、一并
+    收起；展开外层根时内层根记录原样保留 → 内层保持收起。
+    不变量（多父冲突）：闭包内任一节点被 ≥2 个节点连接时禁止收起——否则会
+    凭空吞掉其他父节点的连线、误藏与根齐平的共享节点。收起根被删除时先
+    释放其隐藏节点。*/
+  collapseChain(nodeId) {
+    if (this.readOnly) return false;
+    const root = this._getNodeById(nodeId);
+    if (!root || root.collapse) return false;
+    const closure = Weave.Geom.collapseClosure(this.canvasState.connections, nodeId);
+    if (!closure.length) return false;   //无后续节点：无可收起内容
+    if (Weave.Geom.hasMultiParentConflict(this.canvasState.connections, closure)) return false;   //多父冲突禁止收起
+    root.collapse = { hidden: closure.map(id => {
+      const n = this._getNodeById(id);
+      return { id, dx: n.x - root.x, dy: n.y - root.y };
+    }) };
+    //收起后清理指向隐藏节点的选中 / 曲线编辑（连线与曲线复用 M10 通用清理；
+    //节点选中情况 _dropSelectionIfGone 不覆盖，需另行清除）。
+    const hidSet = new Set(closure);
+    for (const id of hidSet) this.selectedNodeIds.delete(id);
+    this._dropSelectionIfGone(hidSet);
+    this._clearCurveEditIfNodesGone(hidSet);
+    this.saveCanvasSnapshot();
+    this.renderCanvas();
+    this._flushRenderSync();
+    return true;
+  },
+  expandChain(nodeId) {
+    if (this.readOnly) return false;
+    const root = this._getNodeById(nodeId);
+    if (!root || !root.collapse || !Array.isArray(root.collapse.hidden)) return false;
+    const rec = root.collapse;
+    delete root.collapse;
+    //隐藏节点按 根最新坐标 + 收起时保存的偏移 恢复（相对位置语义）。
+    //内层根的 collapse 记录不刷新：隐藏节点坐标在收起期间不变，
+    //偏移是相对量（B 相对 A），展开后任意两节点间的相对差
+    //等于收起时保存的差值。
+    for (const h of rec.hidden) {
+      const n = this._getNodeById(h.id);
+      if (!n) continue;
+      n.x = root.x + h.dx;
+      n.y = root.y + h.dy;
+    }
+    this.saveCanvasSnapshot();
+    this.renderCanvas();
+    this._flushRenderSync();
+    return true;
+  },
+  toggleCollapse(nodeId) {
+    const n = this._getNodeById(nodeId);
+    if (!n) return false;
+    if (n.collapse) return this.expandChain(nodeId);
+    return this.collapseChain(nodeId);
+  },
+  //收起/展开要求子节点与连线立即出现/消失：renderCanvas 内部经
+  //renderLines 走 rAF（下一帧才执行 _doRenderLines），节点可见性恢复
+  //（_updateNodeVisibility）与连线重建都在那一帧才发生——用户感知为
+  //"消失/出现有延迟"。此处取消挂起的 rAF 并同步执行完整渲染，消除延迟。
+  _flushRenderSync() {
+    if (this._linesRaf) { cancelAnimationFrame(this._linesRaf); this._linesRaf = null; }
+    this._doRenderLines();
   },
 
   openNodeModal(id) {
@@ -4136,6 +5841,160 @@ Object.assign(App, {
     this.saveCanvasSnapshot();
     this.renderCanvas();
   },
+
+  // ── 分区（region）属性弹窗 ──
+  openRegionModal(id) {
+    if (this.readOnly) return;
+    const r = this._getRegionById(id);
+    if (!r) return;
+    this._exitRegionResize();
+    this._exitRegionFrameMove();
+    this._regionModalId = id;
+    const m = document.getElementById('regionModal');
+    const lbl = document.getElementById('rmLabel');
+    lbl.value = r.label;
+    m.dataset.color = r.color;
+    this._buildRegionModalDots(r.color);
+    m.classList.add('on');
+    setTimeout(() => lbl.focus(), 30);
+  },
+  closeRegionModal() {
+    document.getElementById('regionModal').classList.remove('on');
+    this._regionModalId = null;
+  },
+  saveRegionModal() {
+    if (this.readOnly) { this.closeRegionModal(); return; }
+    const r = this._getRegionById(this._regionModalId);
+    if (r) {
+      const m = document.getElementById('regionModal');
+      const name = document.getElementById('rmLabel').value.trim();
+      if (name) r.label = name;
+      const c = m.dataset.color;
+      if (c) r.color = c;
+    }
+    this.closeRegionModal();
+    this.saveCanvasSnapshot();
+    this.renderCanvas();
+  },
+  _buildRegionModalDots(activeColor) {
+    this._buildDotPanel('rmColors', 'm', activeColor, (b) => {
+      if (b.dataset.c === '__wheel__') {
+        this.openCustomPicker(null, (hex) => {
+          const r = this._getRegionById(this._regionModalId);
+          if (r) r.color = hex;
+          document.getElementById('regionModal').dataset.color = hex;
+          this._buildRegionModalDots(hex);
+        });
+        return;
+      }
+      document.getElementById('regionModal').dataset.color = b.dataset.c;
+      const cp = document.getElementById('rmColors');
+      if (cp) this._setActiveDot(cp, b.dataset.c);
+    }, '<button class="m-wheel-btn" data-c="__wheel__" title="\u81EA\u9009\u989C\u8272"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>');
+  },
+
+  //删除分区：仅删除框本身，框内节点/连线保留（几何归属随框消失解除）。
+  removeRegion(id) {
+    if (this.readOnly) return;
+    const idx = this.canvasState.regions.findIndex(r => r.id === id);
+    if (idx === -1) return;
+    const del = this.canvasState.regions[idx];
+    //释放直属节点（不再属于任何分区）；直接子分区上提到被删分区的父级，
+    //保持树形（节点的父链不被破坏）。
+    if (Array.isArray(del.nodeIds)) del.nodeIds = [];
+    this.canvasState.regions.forEach(r => {
+      if (r.parentId === id) r.parentId = del.parentId || null;
+    });
+    this.canvasState.regions.splice(idx, 1);
+    if (this.selectedRegionId === id) this.selectedRegionId = null;
+    this._exitRegionResize();
+    this._exitRegionFrameMove();
+    this.saveCanvasSnapshot();
+    this.renderCanvas();
+    this.showToast(this.t('toast.regionDeleted'), 'warning');
+  },
+  //右键"移动分区框"：进入仅移动框体模式（点击后按住分区拖动，节点不随动）。
+  //模式退出：空白单击 / Escape / 进入调整大小 / 删除分区 / 只读切换。
+  ctxRegionFrameMove() {
+    if (this.readOnly || !this._ctxRegionId) { this._clearCtx(); return; }
+    const r = this._getRegionById(this._ctxRegionId);
+    if (!r) return;
+    this._clearCtx();
+    this._exitRegionResize();
+    this._selectRegionOnly(r.id);
+    this._frameMoveRegionId = r.id;
+    this.renderCanvas();
+  },
+  //退出仅移动框体模式（清除状态与视觉高亮）。
+  _exitRegionFrameMove() {
+    if (!this._frameMoveRegionId) return;
+    this._frameMoveRegionId = null;
+    const svg = this._getEl('regionsSvg');
+    if (svg) svg.querySelectorAll('.region-rect.frame-move').forEach(el => el.classList.remove('frame-move'));
+  },
+  //右键"调整分区框大小"：进入调整模式，显示四角手柄，拖动改变框的宽高
+  //（框内节点不随之缩放）。Escape / 空白单击退出。
+  ctxRegionResizeMode() {
+    if (this.readOnly || !this._ctxRegionId) { this._clearCtx(); return; }
+    const r = this._getRegionById(this._ctxRegionId);
+    if (!r) return;
+    this._clearCtx();
+    this._exitRegionFrameMove();
+    this._selectRegionOnly(r.id);
+    this._enterRegionResize(r.id);
+  },
+  //进入分区框调整大小模式：叠加层（虚线框 + 四角手柄）随下一次分区渲染出现，
+  //缩放/平移/全量渲染后依旧存在（叠加层是 _renderRegions 的一部分）。
+  //模式退出时机：Escape / 空白单击 / 再次右键菜单项 / 删除分区 / 只读切换。
+  _enterRegionResize(id) {
+    if (this._regionResizeId === id) return;
+    this._regionResizeId = id;
+    this.renderCanvas();
+  },
+  _exitRegionResize() {
+    if (!this._regionResizeId) return;
+    this._regionResizeId = null;
+    this._renderRegions();
+  },
+  //手柄拖拽：改框的 x/y/w/h（仅框体，节点不参与）。nw/sw 拖改变 x，nw/ne 改变 y。
+  _startRegionResizeDrag(e, r, dir) {
+    //调整分区大小是画布操作：取消关联高亮。
+    this._clearHighlight();
+    this.saveCanvasSnapshot();   //拖拽会话作为一步撤销
+    const self = this;
+    const wp0 = this.getWorldPos(e.clientX, e.clientY);
+    const start = { x: r.x, y: r.y, w: r.w, h: r.h, sx: wp0.x, sy: wp0.y };
+    const onMove = ev => {
+      const p = this.getWorldPos(ev.clientX, ev.clientY);
+      const dx = p.x - start.sx, dy = p.y - start.sy;
+      let x = start.x, y = start.y, w = start.w, h = start.h;
+      if (dir.indexOf('e') >= 0) w = start.w + dx;
+      if (dir.indexOf('s') >= 0) h = start.h + dy;
+      if (dir.indexOf('w') >= 0) w = start.w - dx;
+      if (dir.indexOf('n') >= 0) h = start.h - dy;
+      //吸附：受"分区大小对齐网格"设置控制（开启 → 尺寸粒度为 1 个网格
+      //单元格；关闭 → 1px）。x/y 由锚定几何精确跟随，不参与吸附（同节点）。
+      w = this._snap(w, this._snapRegionSize); h = this._snap(h, this._snapRegionSize);
+      const minW = 60, minH = 40;
+      if (w < minW) w = minW;
+      if (h < minH) h = minH;
+      if (dir.indexOf('w') >= 0) x = start.x + (start.w - w);
+      if (dir.indexOf('n') >= 0) y = start.y + (start.h - h);
+      r.w = w; r.h = h; r.x = x; r.y = y;
+      this._renderRegions();   //重建几何 + 调整模式叠加层（虚线框/手柄随动）
+    };
+    const onUp = () => {
+      cleanup();
+      this.saveCanvasSnapshot();
+    };
+    const cleanup = this._bindDragListeners(onMove, onUp);
+  },
+  //顶栏 分区 按钮：切换分区创建模式（与 Region 键等价）。
+  toggleRegionMode() {
+    if (this.readOnly) return;
+    this._setRegionMode(!this._regionModeActive);
+    this.showToast(this.t(this._regionModeActive ? 'toast.regionModeOn' : 'toast.regionModeOff'), 'info');
+  },
   _cloneNode(src, offsetX, offsetY) {
     const id = this._genId();
     const c = { id, label: src.label + ' 副本', desc: src.desc, color: src.color,
@@ -4144,6 +6003,8 @@ Object.assign(App, {
     const size = Weave.Geom.getNodeSize(src); c.w = size.w; c.h = size.h;
     this.canvasState.nodes.push(c);
     this._nodeZOrder.push(id);
+    //克隆节点落位后同步分区归属（粘贴副本落入分区 → 加入该分区 nodeIds）。
+    this._syncNodeRegionMembership(id);
     return id;
   },
 
@@ -4326,6 +6187,7 @@ Object.assign(App, {
   //上下文菜单的数据操作（迁自 M11）：属性弹窗、镜像、调整大小、重置尺寸、复制、删除。
   ctxProps() {
     if (this._ctxNodeId) this.openNodeModal(this._ctxNodeId);
+    if (this._ctxRegionId) this.openRegionModal(this._ctxRegionId);
     this._clearCtx();
   },
   ctxMirror() {
@@ -4389,6 +6251,7 @@ Object.assign(App, {
     if (this.readOnly) return;
     if (this._ctxNodeId) this.removeNode(this._ctxNodeId);
     if (this._ctxConnId) this._deleteConnection(this._ctxConnId);
+    if (this._ctxRegionId) this.removeRegion(this._ctxRegionId);
     this._clearCtx();
   }
 });
@@ -4613,6 +6476,8 @@ Object.assign(App, {
       this._removeCurveHandles();
     }
     this.saveCanvasSnapshot();
+    //连线拓扑变化 → 输出连接点徽标重算（本路径不重建节点 DOM）。
+    this._refreshFoldBadges();
     this.renderLines();
     if (removed === 1) this.showToast(this.t('toast.connDeleted'), 'warning');
     else this.showToast(this.t('toast.connsDeleted', { n: removed }), 'warning');
@@ -4638,7 +6503,7 @@ const ABOUT_SPIN_MS = 1150;
 const ABOUT_SPIN_PAUSE_MS = 160;
 
 Object.assign(App, {
-  _clearCtx() { this._ctxNodeId = this._ctxConnId = this._ctxEditTarget = null; },
+  _clearCtx() { this._ctxNodeId = this._ctxConnId = this._ctxRegionId = this._ctxEditTarget = null; },
   //弹窗定位（positionNearNode）已下沉至 Weave.Util（M01），
   //由 descEdit 和悬停提示共用；_updateStatusBadge 已迁至 M02。
 
@@ -4651,7 +6516,11 @@ Object.assign(App, {
     if (this._inlineEditTarget) this.closeInlineEdit();
     if (this._descEditNodeId) this._closeDescEdit();
     if (this._curveEditState) this._exitCurveEdit(true);
+    this._exitRegionResize();
+    this._exitRegionFrameMove();
+    if (this._regionModeActive) this._setRegionMode(false);
     this._clearCtx();
+    this.renderCanvas();
     this.showToast(this.t(this.readOnly ? 'toast.readonlyOn' : 'toast.readonlyOff'));
   },
 
@@ -4668,6 +6537,10 @@ Object.assign(App, {
     });
   },
   //进入键位录制：全局捕获按键，Enter 保存 / Esc 取消，冲突则拒绝。
+  //纯修饰键手势（如单独 Alt，供 hlNode"按住修饰键+点击节点"使用）采用 keyup
+  //确认：修饰键按下先记为候选，若随后按下主键则升级为带主键的组合；若直接松开
+  //则保存为纯修饰键。这避免把"组合键中间态"（按 Ctrl 后还没按 K）误存为纯 Ctrl。
+  //无主键统一记 key:'any' 哨兵；纯修饰键只允许绑定到鼠标手势动作（当前仅 hlNode）。
   _startKeybindEdit(action, input) {
     if (this._keybindEditing) this._cancelKeybindEdit();
     input.dataset.orig = input.value;
@@ -4675,17 +6548,8 @@ Object.assign(App, {
     input.value = '';
     input.placeholder = '…';
     const self = this;
-    const onKey = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const key = e.key.toLowerCase();
-      if (key === 'enter') { if (self._keybindEditing) self._cancelKeybindEdit(); return; }
-      if (key === 'escape') { self._cancelKeybindEdit(); return; }
-      if (key === 'control' || key === 'meta' || key === 'shift' || key === 'alt') return;
-      const combo = {
-        ctrl: !!e.ctrlKey, meta: !!e.metaKey, alt: !!e.altKey, shift: !!e.shiftKey, key
-      };
-      if (!(combo.ctrl || combo.meta || combo.alt || combo.shift)) return; // 裸键不绑定，防误改
+    let pendingMod = null;
+    const finish = (combo) => {
       //冲突检查：与其它动作相同则拒绝
       for (const a of Object.keys(self._keybinds)) {
         if (a === action) continue;
@@ -4703,10 +6567,50 @@ Object.assign(App, {
       input.classList.remove('recording');
       self._keybindEditing = null;
       document.removeEventListener('keydown', onKey, true);
+      document.removeEventListener('keyup', onUp, true);
       self.showToast(self.t('toast.keybindSaved'));
     };
-    this._keybindEditing = { action, input, onKey };
+    const onKey = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const key = e.key.toLowerCase();
+      if (key === 'enter') { if (self._keybindEditing) self._cancelKeybindEdit(); return; }
+      if (key === 'escape') { self._cancelKeybindEdit(); return; }
+      const isModOnly = key === 'control' || key === 'meta' || key === 'shift' || key === 'alt';
+      if (isModOnly) {
+        const combo = {
+          ctrl: !!e.ctrlKey, meta: !!e.metaKey, alt: !!e.altKey, shift: !!e.shiftKey, key: ''
+        };
+        //仅接受单一修饰键为候选；多修饰键无主键没有意义。
+        const only = (combo.ctrl ? 1 : 0) + (combo.meta ? 1 : 0) + (combo.alt ? 1 : 0) + (combo.shift ? 1 : 0);
+        if (only === 1 && !pendingMod) pendingMod = combo;
+        return;
+      }
+      //带主键：event 修饰键状态已含此前按下的修饰键，直接完成录制。
+      finish({ ctrl: !!e.ctrlKey, meta: !!e.metaKey, alt: !!e.altKey, shift: !!e.shiftKey, key });
+    };
+    const onUp = (e) => {
+      if (!pendingMod) return;
+      const k = e.key.toLowerCase();
+      const matched = (pendingMod.ctrl && k === 'control') || (pendingMod.meta && k === 'meta') ||
+                      (pendingMod.alt && k === 'alt') || (pendingMod.shift && k === 'shift');
+      if (matched) {
+        const c = pendingMod; pendingMod = null;
+        //键盘命令若绑成纯修饰键将永远无法触发：只允许鼠标手势动作（当前仅 hlNode）
+        //录制纯修饰键，其余动作直接拒绝，避免"看似已保存实则无效"的假绑定。
+        if (action !== 'hlNode') {
+          self.showToast(self.t('toast.modOnlyHlNode'), 'warning');
+          self._cancelKeybindEdit();
+          return;
+        }
+        //与默认表同构：无主键统一记 key:'any'（载入合并/显示/冲突检查只认这一个哨兵）。
+        c.key = 'any';
+        finish(c);
+      }
+    };
+    this._keybindEditing = { action, input, onKey, onUp };
     document.addEventListener('keydown', onKey, true);
+    document.addEventListener('keyup', onUp, true);
   },
   _cancelKeybindEdit() {
     const s = this._keybindEditing;
@@ -4715,6 +6619,7 @@ Object.assign(App, {
     s.input.classList.remove('recording');
     this._keybindEditing = null;
     document.removeEventListener('keydown', s.onKey, true);
+    if (s.onUp) document.removeEventListener('keyup', s.onUp, true);
   },
   //填充设置弹窗中的键位框并绑定录制交互（Init 调用一次）。
   _bindKeybindInputs() {
@@ -4739,6 +6644,18 @@ Object.assign(App, {
     });
     this.showToast(this.t('toast.keysReset'));
   },
+  //重置常规页 4 个对齐设置：逐项恢复到 _settings 表的出厂默认（def，当前全开）。
+  //映射复用 App._snapToggleDefs（与 M13 启动加载同一份），默认值不重复写字面量。
+  _resetSnapSettings() {
+    for (const d of this._snapToggleDefs) {
+      const def = this._settings[d.store].def;
+      this._settings.setBool(d.store, def);
+      this[d.field] = def;
+      const el = document.getElementById(d.id);
+      if (el) el.checked = def;
+    }
+    this.showToast(this.t('toast.snapReset'));
+  },
   closeSettings() {
     document.getElementById('settingsModal').classList.remove('on');
     //首次启动的键位设置（设置弹窗）看过一次后不再自动弹出。
@@ -4758,29 +6675,40 @@ Object.assign(App, {
   },
 
   //── 上下文菜单 ──
-  showCtx(x, y, nodeId, connId, editTarget) {
+  //分区右键：regionId 非空 → 显示 属性 / 移动分区框 / 调整分区框大小 / 删除；
+  //节点/连线路径不变。"属性"与"删除"复用节点同款按钮（与节点菜单一致）。
+  showCtx(x, y, nodeId, connId, editTarget, regionId) {
+    //打开右键菜单是画布操作：取消关联高亮。
+    this._clearHighlight();
     this._ctxNodeId = nodeId;
     this._ctxConnId = connId || null;
+    this._ctxRegionId = regionId || null;
     this._ctxEditTarget = editTarget || 'title';
+    const isRegion = !!regionId;
     //自适应菜单：节点显示 编辑 / 复制 / 镜像 / 属性 / 删除；
     //连线只显示编辑标签 / 删除以及曲线相关项。
     const isConn = !!connId;
     const set = (id, show) => { const el = document.getElementById(id); if (el) el.style.display = show ? '' : 'none'; };
     set('ctxEdit', true);
-    set('ctxDup', !isConn);
-    set('ctxMirror', !isConn);
+    set('ctxDup', !isConn && !isRegion);
+    set('ctxMirror', !isConn && !isRegion);
     set('ctxProps', !isConn);
     set('ctxDel', true);
     set('ctxSep1', !isConn);
-    set('ctxSepMirror', !isConn);
-    set('ctxSep2', !isConn);
+    set('ctxSepMirror', !isConn && !isRegion);
+    set('ctxSep2', !isConn && !isRegion);
     //节点操作：每个节点都可用调整大小和重置大小。
-    set('ctxResize', !isConn);
-    set('ctxResetSize', !isConn);
+    set('ctxResize', !isConn && !isRegion);
+    set('ctxResetSize', !isConn && !isRegion);
     set('ctxSepDanger', !isConn);
-    set('ctxCurve', isConn);
-    set('ctxSepCurve', isConn);
-    set('ctxResetCurve', isConn);
+    set('ctxCurve', isConn && !isRegion);
+    set('ctxSepCurve', isConn && !isRegion);
+    set('ctxResetCurve', isConn && !isRegion);
+    //分区专属项：属性之后一条分隔（ctxSepRegion），移动/调整组，
+    //删除前复用 ctxSepDanger 分隔（同节点布局）。
+    set('ctxRegionMove', isRegion);
+    set('ctxRegionResize', isRegion);
+    set('ctxSepRegion', isRegion);
 
     const ctxEdit = this._getEl('ctxEdit');
     if (ctxEdit) ctxEdit.textContent = isConn ? '编辑文字' : (editTarget === 'desc' ? '编辑描述' : '编辑');
@@ -4790,7 +6718,7 @@ Object.assign(App, {
     m.style.display = 'block';
     //当某个节点的上下文菜单打开时，悬停删除的 "X" 必须保持
     //隐藏（在下次点击菜单关闭后会重新出现）。
-    document.body.classList.toggle('ctx-open', !isConn);
+    document.body.classList.toggle('ctx-open', !isConn && !isRegion);
   },
 
   ctxEdit() {
@@ -4803,6 +6731,7 @@ Object.assign(App, {
       }
     }
     if (this._ctxConnId) this.inlineEdit('edge', this._ctxConnId);
+    if (this._ctxRegionId) this._beginRegionLabelEdit(this._ctxRegionId);
     this._clearCtx();
   },
 
@@ -4967,9 +6896,10 @@ Object.assign(App, {
     };
     r.readAsText(f);
   },
-  //JSON / PNG 导出共用的导出守卫：没有可导出的内容 → 发出警告并中止。
+  //JSON / PNG 导出共用的导出守卫：没有可导出的内容（节点或分区皆无）
+  //→ 发出警告并中止。
   _guardHasNodes() {
-    if (this.canvasState.nodes.length === 0) { this.showToast(this.t('toast.noData'), 'warning'); return false; }
+    if (this.canvasState.nodes.length === 0 && this.canvasState.regions.length === 0) { this.showToast(this.t('toast.noData'), 'warning'); return false; }
     return true;
   },
   //为给定的 href（blob URL 或 data URL）触发浏览器下载。
@@ -5009,6 +6939,9 @@ Object.assign(App, {
   //（离线 / 被屏蔽）→ 使用系统字体回退。
   async _inlineExportFonts() {
     try {
+      //file:// 页面的源为 null，跨源取 Google Fonts CSS 必被 CORS 拦截：
+      //直接跳过，避免控制台报错与一次无效请求（导出文字走系统字体回退）。
+      if (location.protocol === 'file:') return '';
       const link = document.head.querySelector('link[href*="fonts.googleapis.com"]');
       if (!link) return '';
       const withTimeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
@@ -5067,6 +7000,14 @@ Object.assign(App, {
     if (nodesC) { nodesC.style.transform = 'none'; nodesC.style.transition = 'none'; }
     const overlay = sn.querySelector('#curveOverlay');
     if (overlay) overlay.remove();
+    //活动 HTML 标签层（regionLabels）的 transform 预乘了实时 scale，导出
+    //按 1:1 世界比例重建时移除，改由下方重建的 regions SVG 自带文本标签。
+    const liveLabels = sn.querySelector('#regionLabels');
+    if (liveLabels) liveLabels.remove();
+    //收起隐藏节点不进入导出：被收起的节点从快照中整体移除（保持画布上
+    //"被收起"的呈现），视口剔除（display:none）的节点才恢复显示。
+    //输出连接点的 −/+ 徽标随节点保留，与画布显示一致。
+    sn.querySelectorAll('.node.collapse-hidden').forEach(el => el.remove());
     sn.querySelectorAll('.node').forEach(el => { if (el.style.display === 'none') el.style.display = ''; });
     sn.querySelectorAll('.node.selected,.node.dragging,.node.resizing,.line.selected,.line.hover,.line-label.selected,.line-label.hover,.conn-arrow.selected').forEach(el => el.classList.remove('selected', 'dragging', 'resizing', 'hover'));
     sn.querySelectorAll('.node-close,.node-clear').forEach(el => el.remove());
@@ -5076,6 +7017,9 @@ Object.assign(App, {
     //该缩放级别下才有效。与实时渲染使用相同的数据与几何辅助函数。
     const oldSvg = sn.querySelector('#linesSvg');
     if (oldSvg) oldSvg.remove();
+    //高亮抬升层同样不进导出：快照按数据重建全部连线，保留它会重复绘制。
+    const oldHlSvg = sn.querySelector('#linesSvgHl');
+    if (oldHlSvg) oldHlSvg.remove();
     const svg = Weave.Util.svgEl('svg', { class: 'lines-svg', width: '1', height: '1' });
     svg.style.overflow = 'visible';
     const connGroup = Weave.Util.svgEl('g', { class: 'conn-group' });
@@ -5088,6 +7032,7 @@ Object.assign(App, {
     this.canvasState.connections.forEach(conn => {
       const fromNode = nodeMap.get(conn.from), toNode = nodeMap.get(conn.to);
       if (!fromNode || !toNode) return;
+      if (this._isConnectionCollapseHidden(conn)) return;
       const geo = this._buildLinePath(conn, fromNode, toNode, 1);
       const path = Weave.Util.svgEl('path', { d: geo.d, class: geo.pathCls });
       //导出路径同样需要显式描边宽度（比例 1）；与实时渲染一致，不用 CSS 计算。
@@ -5112,6 +7057,38 @@ Object.assign(App, {
     });
     svg.appendChild(connGroup);
     sn.appendChild(svg);
+    //分区（region）SVG：以世界比例（1:1）重建，替代克隆的预缩放几何。
+    //克隆中 rect 的 rx/ry、文本字号均为屏幕比例，需按导出几何重建。
+    const oldReg = sn.querySelector('#regionsSvg');
+    if (oldReg) oldReg.remove();
+    const rsvg = Weave.Util.svgEl('svg', { class: 'regions-svg', id: 'regionsSvg', width: '1', height: '1' });
+    rsvg.style.overflow = 'visible';
+    //嵌套渲染顺序与实时画布一致：父先画、子后画（显式树深度）。
+    const rOrder = this.canvasState.regions.slice().sort((a, b) => this._regionDepth(a) - this._regionDepth(b));
+    rOrder.forEach(r => {
+      const rc = this._resolveColor(r.color);
+      const hex = rc.hex;
+      const rect = Weave.Util.svgEl('rect', {
+        x: r.x, y: r.y, width: r.w, height: r.h, rx: 10, ry: 10,
+        class: 'region-rect', fill: hex, 'fill-opacity': .06, stroke: hex, 'stroke-opacity': .5, 'stroke-width': 1.5
+      });
+      rsvg.appendChild(rect);
+      //标签：左上角内沿文字（灰字 + 白描边光晕），与实时渲染同款样式。
+      const lbl = r.label || '';
+      const padX = 8;
+      const text = Weave.Util.svgEl('text', {
+        x: r.x + padX, y: r.y + REGION_LABEL_FONT,
+        'font-size': REGION_LABEL_FONT, 'font-family': 'Inter,sans-serif', 'font-weight': '600',
+        'text-anchor': 'start', 'dominant-baseline': 'middle',
+        fill: '#4a5568',
+        stroke: 'rgba(255,255,255,.9)', 'stroke-width': 3, 'paint-order': 'stroke fill'
+      });
+      const tspan = Weave.Util.svgEl('tspan', {});
+      tspan.textContent = lbl;
+      text.appendChild(tspan);
+      rsvg.appendChild(text);
+    });
+    sn.appendChild(rsvg);
     return sn;
   },
 
@@ -5202,7 +7179,9 @@ Object.assign(App, {
   //包含内容的节点比例（0..1）。30 通道差的
   //阈值可滤除网格线（约 17）。
   _validateExportContent(ctx, dpr, worldL, worldT) {
-    const nodes = this.canvasState.nodes;
+    //收起隐藏的节点不会出现在导出图像中——采样它们只会拉低命中率
+    //（甚至误判为空白渲染），因此仅采样可见节点。
+    const nodes = this.canvasState.nodes.filter(n => !this._isCollapseHidden(n.id));
     if (!nodes.length) return 1;
     const W = ctx.canvas.width, H = ctx.canvas.height;
     const bg = ctx.getImageData(1, 1, 1, 1).data;
@@ -5246,8 +7225,14 @@ Object.assign(App, {
       if (x < minX) minX = x; if (x > maxX) maxX = x;
       if (y < minY) minY = y; if (y > maxY) maxY = y;
     };
-    const bb = Weave.Geom.nodesBBox(this.canvasState.nodes, n => Weave.Geom.getNodeRect(n));
+    //被收起隐藏的节点 / 连线不参与边界：PNG 按当前可视内容导出。
+    const visibleNodes = this.canvasState.nodes.filter(n => !this._isCollapseHidden(n.id));
+    const bb = Weave.Geom.nodesBBox(visibleNodes, n => Weave.Geom.getNodeRect(n));
     if (Number.isFinite(bb.minX)) { consider(bb.minX, bb.minY); consider(bb.maxX, bb.maxY); }
+    //分区矩形参与导出边界（分区可能超出节点包围盒，例如空分区）。
+    this.canvasState.regions.forEach(r => {
+      consider(r.x, r.y); consider(r.x + r.w, r.y + r.h);
+    });
     if (includeConnControls) {
       const nodeMap = this._getNodeMap();
       //扇出偏移必须纳入边界中：平行曲线
@@ -5256,6 +7241,7 @@ Object.assign(App, {
       this.canvasState.connections.forEach(conn => {
         const fn = nodeMap.get(conn.from), tn = nodeMap.get(conn.to);
         if (!fn || !tn) return;
+        if (this._isConnectionCollapseHidden(conn)) return;
         const g = this._getConnGeometry(conn, fn, tn);
         consider(g.fromOut.x, g.fromOut.y); consider(g.toIn.x, g.toIn.y);
         consider(g.fromOut.x + g.cp.c1x, g.fromOut.y + g.cp.c1y); consider(g.toIn.x + g.cp.c2x, g.toIn.y + g.cp.c2y);
@@ -5351,9 +7337,31 @@ Object.assign(App, {
     Weave.Util.strokeGridLines(ctx, minorStep, GRID_MINOR_COLOR, gStartX, gStartY, gEndX, gEndY, id, id);
     Weave.Util.strokeGridLines(ctx, majorStep, GRID_MAJOR_COLOR, gStartX, gStartY, gEndX, gEndY, id, id);
     const nodeMap = this._getNodeMap();
+    //分区（画框）绘制在连线之下：圆角矩形边框 + 半透明填充 + 左上角标签。
+    //嵌套渲染顺序与实时画布一致：父先画、子后画（显式树深度）。
+    const rOrder = this.canvasState.regions.slice().sort((a, b) => this._regionDepth(a) - this._regionDepth(b));
+    rOrder.forEach((r) => {
+      const rc = this._resolveColor(r.color);
+      Weave.Util.roundedRectPath(ctx, r.x, r.y, r.w, r.h, 10, false);
+      ctx.fillStyle = rc.hex; ctx.globalAlpha = 0.06; ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = rc.hex; ctx.globalAlpha = 0.5; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (r.label) {
+        //标签：左上角内沿，灰字 + 白描边光晕（同实时渲染）。
+        const fs = REGION_LABEL_FONT, padX = 8;
+        ctx.font = '600 ' + fs + 'px Inter, sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.lineWidth = 3;
+        ctx.strokeText(r.label, r.x + padX, r.y + fs);
+        ctx.fillStyle = '#4a5568'; ctx.fillText(r.label, r.x + padX, r.y + fs);
+      }
+    });
     this.canvasState.connections.forEach((conn) => {
       const fromNode = nodeMap.get(conn.from), toNode = nodeMap.get(conn.to);
       if (!fromNode || !toNode) return;
+      if (this._isConnectionCollapseHidden(conn)) return;
       const g = this._getConnGeometry(conn, fromNode, toNode);
       const fromP = g.fromOut, toP = g.toIn, cp = g.cp;
       const rc = this._resolveColor(fromNode.color);
@@ -5382,6 +7390,7 @@ Object.assign(App, {
       }
     });
     this.canvasState.nodes.forEach((n) => {
+      if (this._isCollapseHidden(n.id)) return;   //收起隐藏节点不进入 legacy 导出
       const { x: nx, y: ny, w: nw, h: nh } = Weave.Geom.getNodeRect(n);
       const rc = this._resolveColor(n.color);
       const r = 12;
@@ -5404,7 +7413,9 @@ Object.assign(App, {
       ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0; ctx.shadowOffsetX = 0;
       const socketR = 8, socketInnerR = 4;
       const outP = Weave.Geom.getSocketAnchor(n, 'out'), inP = Weave.Geom.getSocketAnchor(n, 'in');
-      [outP.x, inP.x].forEach((sx) => {
+      //输出连接点带收起徽标（−/+）时以徽标替代中心圆点，与画布显示一致。
+      const foldBadge = this._canToggleCollapse(n.id);
+      [outP.x, inP.x].forEach((sx, i) => {
         ctx.beginPath();
         ctx.arc(sx, outP.y, socketR, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
@@ -5412,6 +7423,18 @@ Object.assign(App, {
         ctx.strokeStyle = rc.hex;
         ctx.lineWidth = 2;
         ctx.stroke();
+        if (i === 0 && foldBadge) {
+          //横线为 −，叠加竖线为 +（线宽与 SVG 徽标的 2/8 比例接近）。
+          ctx.beginPath();
+          ctx.moveTo(sx - 3, outP.y); ctx.lineTo(sx + 3, outP.y);
+          if (n.collapse) { ctx.moveTo(sx, outP.y - 3); ctx.lineTo(sx, outP.y + 3); }
+          ctx.strokeStyle = rc.hex;
+          ctx.lineWidth = 1.6;
+          ctx.lineCap = 'round';
+          ctx.stroke();
+          ctx.lineCap = 'butt';
+          return;
+        }
         ctx.beginPath();
         ctx.arc(sx, outP.y, socketInnerR, 0, Math.PI * 2);
         ctx.fillStyle = rc.hex;
@@ -5470,6 +7493,14 @@ let _panLastEvent = null;
 
 document.addEventListener('mousemove', function(e) {
   if (App.isDragging) return;
+  if (App.regionDragState) {
+    const rd = App.regionDragState;
+    if (rd.rect) {
+      const wp = Weave.Geom.screenToWorld(e.clientX - rd.rect.left, e.clientY - rd.rect.top, App.panX, App.panY, App.scale);
+      rd.curWorldX = wp.x; rd.curWorldY = wp.y;
+      App._updateRegionPreview(wp.x, wp.y);
+    }
+  }
   if (App.canvasBoxState) {
     const box = App.canvasBoxState;
     //矩形在 mousedown 时缓存（拖拽期间画布不移动）。
@@ -5496,6 +7527,12 @@ document.addEventListener('mousemove', function(e) {
         if (!ev || !App.canvasPanState) return;
         App.panX = App.canvasPanState.origPanX + (ev.clientX - App.canvasPanState.startX);
         App.panY = App.canvasPanState.origPanY + (ev.clientY - App.canvasPanState.startY);
+        //从分区上按下放行来的平移：位移超过阈值则置位，rect 的 click 据此不选中。
+        if (Math.abs(ev.clientX - App.canvasPanState.startX) > 5 ||
+            Math.abs(ev.clientY - App.canvasPanState.startY) > 5) {
+          App._regionPanMoved = true;
+          App._panActuallyMoved = true;
+        }
         App.clampPan();
         /*只更新 world 平移 + 网格（缩放不变）*/
         const world = App._getEl('canvasWorld');
@@ -5514,23 +7551,40 @@ document.addEventListener('mouseup', function() {
     const c = App._getEl('canvasStage');
     if (c) c.classList.remove('grabbing');
     App.canvasPanState = null;
+    //真实发生过位移的平移结束后，浏览器补发的 click 应被吞掉（否则
+    //它会走空白单击路径清除刚保留下来的高亮）。无位移的空白单击
+    //(_panActuallyMoved=false) 不吞，照常清除高亮/选中。
+    //仅在关联高亮激活时吞掉平移补发的 click：无高亮时保持历史行为
+    //（平移松手的 click 照旧走空白单击路径）。
+    App._panJustFinished = App._panActuallyMoved && !!App.hlNodeIds;
+    App._panActuallyMoved = false;
     //仅视图变化：已做防抖，与缩放 / 恢复一致（beforeunload 覆盖
     //防抖窗口内关闭页面的情况）。
     App.debouncedAutoSave();
   }
   if (App.canvasBoxState) App.finalizeBoxSelect();
+  if (App.regionDragState) App.finalizeRegionCreate();
+  //注：分区移动不在此兜底——startRegionMove 已自绑 mouseup/blur，若在全局
+  //阶段先清 regionMoveState，会抢跑其 onUp 导致吸附与撤销入栈被跳过。
 });
 
 //内联文本拖拽选择在节点外结束时：浏览器随后会在画布上触发一次
 //click（mousedown 与 mouseup 都以画布为
 //共同祖先），这是选择产生的副作用 —— 通过标记，让
 //_onCanvasClick 忽略该 click，内联编辑保持完好。
+//分区标签（contenteditable）的文本选择结束于标签之外时同理。
 document.addEventListener('mouseup', function(e) {
-  const t = App._inlineEditTarget;
-  if (!t || (t.type !== 'nodeTitle' && t.type !== 'nodeDesc')) return;
   if (e.button !== 0) return;   //只有左键文本拖拽会标记该 click
-  const et = e.target;
-  if (!(et && et.closest && et.closest('.node'))) App._suppressNextCanvasClick = true;
+  const t = App._inlineEditTarget;
+  if (t && (t.type === 'nodeTitle' || t.type === 'nodeDesc')) {
+    const et = e.target;
+    if (!(et && et.closest && et.closest('.node'))) App._suppressNextCanvasClick = true;
+    return;
+  }
+  if (App._regionEditEl) {
+    const et = e.target;
+    if (!(et && et.closest && et.closest('.region-label'))) App._suppressNextCanvasClick = true;
+  }
 }, true);
 
 //内联编辑事件（输入框键盘/失焦绑定已移入 App._bindInlineInputs，Init 时调用）
@@ -5542,6 +7596,7 @@ document.addEventListener('click', () => { App._getEl('ctx').style.display = 'no
 //弹窗事件
 document.getElementById('cpModal').addEventListener('click', function(e) { if (e.target === this) App.cancelCustomPicker(); });
 document.getElementById('settingsModal').addEventListener('click', function(e) { if (e.target === this) App.closeSettings(); });
+document.getElementById('regionModal').addEventListener('click', function(e) { if (e.target === this) App.closeRegionModal(); });
 
 //键盘
 document.addEventListener('keydown', function(e) {
@@ -5555,20 +7610,36 @@ document.addEventListener('keydown', function(e) {
   else if (App._keyMatch('autoModal', e)) { e.preventDefault(); App._autoOpenModal = !App._autoOpenModal; App._settings.setBool('autoModal', App._autoOpenModal); App.showToast(App.t(App._autoOpenModal ? 'toast.autoModalOn' : 'toast.autoModalOff')); }
   else if (App._keyMatch('chrome', e)) { e.preventDefault(); if (!isEditing) App.toggleChrome(); }
   else if (e.key === 'Escape') {
-    App.closeModal(); App.closeSettings();
+    App.closeModal(); App.closeSettings(); App.closeRegionModal();
     const hadInline = !!App._inlineEditTarget;
     if (hadInline) App.closeInlineEdit();
     const hadDesc = !!App._descEditNodeId;
     if (hadDesc) App._closeDescEdit();
     if (App._curveEditState) App._exitCurveEdit(true);
+    //分区创建模式（Region 键）用 Escape 退出。
+    if (App._regionModeActive) App._setRegionMode(false);
+    //分区框调整大小 / 仅移动框体模式用 Escape 退出。
+    if (App._regionResizeId) { App._exitRegionResize(); App.renderCanvas(); }
+    if (App._frameMoveRegionId) {
+      App._exitRegionFrameMove();
+      App.selectedRegionId = null;
+      App.renderCanvas();
+    }
     //内联/描述编辑的本地 Escape 处理器已放行到此处统一关闭；
     //closeInlineEdit 本身不重渲染，Escape 撤销路径需要恢复 DOM 文本。
     if (hadInline || hadDesc) App.renderCanvas();
+  }
+  else if (App._keyMatch('region', e)) {
+    e.preventDefault();
+    if (isEditing || App.readOnly) return;
+    App._setRegionMode(!App._regionModeActive);
+    App.showToast(App.t(App._regionModeActive ? 'toast.regionModeOn' : 'toast.regionModeOff'), 'info');
   }
   else if (App._keyMatch('delete', e) && !isEditing && !App._getEl('modal').classList.contains('on')) {
     if (App.readOnly) return;
     if (App.selectedNodeIds.size > 0) { App.removeNodes([...App.selectedNodeIds]); }
     else if (App.selectedConnIds.size > 0) { App._deleteConnections([...App.selectedConnIds]); }
+    else if (App.selectedRegionId) { App.removeRegion(App.selectedRegionId); }
     else { App.showToast(App.t('toast.nothingSelected'), 'info'); }
   }
 });
@@ -5637,10 +7708,15 @@ document.addEventListener('keydown', function(e) {
     ctxEdit: 'ctxEdit', ctxDup: 'ctxDup', ctxMirror: 'ctxMirror',
     ctxResize: 'ctxResize', ctxResetSize: 'ctxResetSize', ctxProps: 'ctxProps',
     ctxCurve: 'ctxCurveDrag', ctxResetCurve: 'ctxResetCurve', ctxDel: 'ctxDel',
+    ctxRegionMove: 'ctxRegionFrameMove', ctxRegionResize: 'ctxRegionResizeMode',
+    btnRegion: 'toggleRegionMode',
     btnCloseModal: 'closeModal', btnSaveModal: 'saveModal',
+    btnCloseRegionModal: 'closeRegionModal', btnSaveRegionModal: 'saveRegionModal',
+    btnCloseRegionModal: 'closeRegionModal', btnSaveRegionModal: 'saveRegionModal',
     btnCancelPicker: 'cancelCustomPicker', btnConfirmColor: 'confirmCustomColor',
     btnLangZh: 'setLangZh', btnLangEn: 'setLangEn',
-    btnResetKeybinds: '_resetKeybinds'
+    btnResetKeybinds: '_resetKeybinds',
+    btnResetSnap: '_resetSnapSettings'
   };
   for (const id of Object.keys(BIND_CLICKS)) {
     document.getElementById(id).addEventListener('click', () => App[BIND_CLICKS[id]]());
@@ -5660,26 +7736,26 @@ document.addEventListener('keydown', function(e) {
     });
   }
 
-  /* 设置："对齐节点" 默认开启（历史沿用的网格吸附），"节点大小
-     对齐" 默认关闭（历史沿用的 1px 粒度）。持久化到
-     localStorage，使两者在刷新后仍保留。 */
-  App._snapNodes = App._settings.getBool('snapNodes');
-  App._snapSize = App._settings.getBool('snapSize');
+  /* 对齐设置 4 项（接线映射见 App._snapToggleDefs，默认值 = _settings 表 def，
+     当前 4 项出厂全开）：加载持久化值 → App 字段；下方开关勾选与
+     "重置对齐设置"共用同一份映射，默认值不在此重复。 */
+  for (const d of App._snapToggleDefs) {
+    App[d.field] = App._settings.getBool(d.store);
+  }
   App._chromeHidden = App._settings.getBool('chromeHidden');
   if (App._chromeHidden) {
     const layout = document.querySelector('.layout');
     if (layout) layout.classList.add('hide-chrome');
   }
-  document.getElementById('setSnapNodes').checked = App._snapNodes;
-  document.getElementById('setSnapSize').checked = App._snapSize;
-  document.getElementById('setSnapNodes').addEventListener('change', function() {
-    App._snapNodes = this.checked;
-    App._settings.setBool('snapNodes', this.checked);
-  });
-  document.getElementById('setSnapSize').addEventListener('change', function() {
-    App._snapSize = this.checked;
-    App._settings.setBool('snapSize', this.checked);
-  });
+  /* 对齐开关初始勾选 + 变更写回（与上面的加载共用 App._snapToggleDefs 映射） */
+  for (const d of App._snapToggleDefs) {
+    const el = document.getElementById(d.id);
+    el.checked = App[d.field];
+    el.addEventListener('change', function() {
+      App[d.field] = this.checked;
+      App._settings.setBool(d.store, this.checked);
+    });
+  }
   document.getElementById('btnShowSettings').addEventListener('click', () => App.showSettings());
   document.getElementById('btnCloseSettings').addEventListener('click', () => App.closeSettings());
   /* 设置弹窗侧边导航 */

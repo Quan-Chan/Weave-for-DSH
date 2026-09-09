@@ -1,13 +1,13 @@
 {
   "name": "weave-for-dsh",
   "description": "Weave node-graph editor as a fixed DeepSeek Harness plugin: embeds the single-file editor as a page view, registers the `weave` AI tool that directly controls the page JS, and ships an AI-teaching skill.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "main": "./lib/index.js",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Quan-Chan/Weave-for-DSH.git"
+    "url": "git+https://github.com/Quan-Chan/Weave-for-DSH.git"
   },
   "keywords": [
     "deepseek-harness",
@@ -38,8 +38,7 @@
     },
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-runtime"
+        "@deepseek-ai/dsh-client-connection"
       ],
       "platform": "web"
     }
@@ -57,7 +56,8 @@
     "LICENSE"
   ],
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.7"
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-invariants": "^0.1.1-rc.2 || ^0.1.2-rc.1",
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2 || ^0.1.2-rc.1"
   }
 }
