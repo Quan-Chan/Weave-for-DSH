@@ -1,7 +1,7 @@
 {
   "name": "weave-for-dsh",
   "description": "Weave node-graph editor as a fixed DeepSeek Harness plugin: embeds the single-file editor as a page view, registers the `weave` AI tool that directly controls the page JS, and ships an AI-teaching skill.",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "main": "./lib/index.js",
   "license": "Apache-2.0",
@@ -26,10 +26,6 @@
       "types": "./lib/types/client/index.d.ts",
       "default": "./lib/client.js"
     },
-    "./invariant": {
-      "types": "./lib/types/invariant.d.ts",
-      "default": "./lib/invariant.js"
-    },
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -46,7 +42,6 @@
   "files": [
     "cordis.patch.yml",
     "lib/index.js",
-    "lib/invariant.js",
     "lib/client.js",
     "lib/types/**/*.d.ts",
     "assets/Weave.html",
@@ -57,7 +52,6 @@
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-invariants": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2"
+    "@deepseek-ai/dsh-tools": "^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.7-rc.2 || ^0.2.0-rc.2 || ^0.2.1-rc.2"
   }
 }
