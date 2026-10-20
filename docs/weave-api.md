@@ -1,6 +1,6 @@
 # Weave 编辑器 —— 插件 API 完全参考
 
-> 本文档描述 `weave-for-dsh` 插件通过 AI 工具 `weave` 暴露出来的、可以操控嵌入在 DeepSeek Harness 页面内的 Weave 节点图编辑器的全部接口。
+> 本文档描述 `weave-for-dsh` 插件通过 AI 工具 `weave` 暴露出来的、可以操控嵌入在 DeepSeek Harness 页面内的 Weave 画布编辑器的全部接口。编辑器（v2.0+）有**节点图**与**时序图**两种画布模式，各自持有一份独立文档；除特别说明外，`weave` 桥接方法在当前模式下工作。
 >
 > 使用方式：AI 调用工具 `weave`，参数为一段 **JavaScript 表达式**（支持 `await`），表达式在页面内嵌的 Weave 编辑器（iframe）内执行，随后把求值结果以 JSON 返回，出错时回传错误信息。
 >
@@ -27,7 +27,8 @@
    - [4.8 颜色系统](#48-颜色系统)
    - [4.9 设置 / 语言 / 快捷键](#49-设置--语言--快捷键)
    - [4.10 只读模式 / UI 显示](#410-只读模式--ui-显示)
-   - [4.11 App 全部成员索引](#411-app-全部成员索引)
+   - [4.11 画布模式与时序图](#411-画布模式与时序图)
+   - [4.12 App 全部成员索引](#412-app-全部成员索引)
 5. [页面 UI 元素与可打开的界面](#5-页面-ui-元素与可打开的界面)
 6. [常用示例](#6-常用示例)
 7. [注意事项与边界](#7-注意事项与边界)
@@ -51,21 +52,25 @@ await weave.exportPng()
 
 ## 2. `weave` 桥接对象
 
-插件在页面内注入的 `weave` 对象，封装了最常用操作，返回值都经过 Weave 自身的序列化 / 渲染管线。
+插件在页面内注入的 `weave` 对象，封装了最常用操作，返回值都经过 Weave 自身的序列化 / 渲染管线。标注「仅节点图」/「仅时序图」的方法在错误模式下会抛出带切换提示的错误；其余方法随当前模式工作。
 
 | 方法 | 参数 | 返回 | 用途 |
 |---|---|---|---|
-| `addNode(spec)` | `spec: { label?, desc?, color?, x?, y?, w?, h? }` | 新节点对象 `{id,label,desc,color,x,y,mirrored,w,h}` | 加一个节点，自动选中、保存、重渲染。`x`/`y`/`w`/`h` 为像素。颜色可为预设 id（`blue`/`cyan`/`green`/`yellow`/`orange`，旧名 `amber`/`rose`/`teal`/`violet` 亦可）或 `#rrggbb`；未知 id 会回退为蓝色。节点落进已有分区时自动加入该分区 `nodeIds` |
-| `addRegion(spec)` | `spec: { x, y, w, h, label?, color? }` | 新分区对象 `{id,label,color,x,y,w,h,nodeIds,parentId}` | 画一个分区框。`x`/`y`/`w`/`h` 为像素。整框包含的未归属节点自动加入 `nodeIds`；中心命中的最深现存分区设为 `parentId`；自动选中、保存、重渲染 |
+| `getMode()` | — | `"graph"` \| `"sequence"` | 当前画布模式（节点图 / 时序图） |
+| `setMode(mode)` | `mode: "graph" \| "sequence"` | 切换后的模式 | 切换画布模式。两种模式各持一份完全独立的文档（含各自的撤销历史与视口），互不影响 |
+| `addNode(spec)` | `spec: { label?, desc?, color?, x?, y?, w?, h?, life? }` | 新节点对象 `{id,label,desc,color,x,y,mirrored,w,h[,life]}` | 加一个节点，自动选中、保存、重渲染。`x`/`y`/`w`/`h` 为像素，省略 `w`/`h` 即默认 180×80。颜色可为预设 id（`blue`/`cyan`/`green`/`yellow`/`orange`）或 `#rrggbb`；未知 id 会回退为蓝色。节点落进已有分区时自动加入该分区 `nodeIds`。**时序图下**节点自动带 `life`（时序线长度，像素，缺省 200），也可显式传入 |
+| `addConnection(fromId, toId, opts?)` | `opts: { label?, cp1?, cp2?, mirrored? }` | 新连线对象 `{id,from,to,label,...}` | 在两个节点之间建一条连线（仅节点图），自动保存重渲染 |
+| `addMessage(fromId, toId, y?, opts?)` | `y` 为消息高度（像素）；`opts: { label?, dashed?, color? }` | 新消息对象 `{id,from,to,y,label?,...}` | 在两条时序线之间建一条消息（仅时序图）。`y` 省略时落在源时序线中点并按格取整；低于两端锚点时自动抬高；时序线不够长时自动延长，箭头两端永不悬空 |
+| `addRegion(spec)` | `spec: { x, y, w, h, label?, color? }` | 新分区对象 `{id,label,color,x,y,w,h,nodeIds,parentId}` | 画一个分区框（仅节点图）。`x`/`y`/`w`/`h` 为像素。**整框包含**的未归属节点自动加入 `nodeIds`；中心命中的最深现存分区设为 `parentId`；自动选中、保存、重渲染 |
 | `removeRegion(id)` | `id` | 剩余分区数组 | 删除一个分区框；框内节点与连线保留，直接子分区上提到被删分区的父级 |
-| `collapseNode(nodeId)` | `nodeId` | `boolean` | 收起节点的可达后代链。无可收起内容或多父冲突时返回 `false` 且不改状态 |
+| `collapseNode(nodeId)` | `nodeId` | `boolean` | 收起节点的可达后代链（仅节点图）。无可收起内容或多父冲突时返回 `false` 且不改状态 |
 | `expandNode(nodeId)` | `nodeId` | `boolean` | 展开已收起节点，隐藏节点按保存的相对偏移恢复。未收起时返回 `false` |
 | `toggleCollapse(nodeId)` | `nodeId` | `boolean` | 收起 ⇄ 展开切换 |
 | `canCollapse(nodeId)` | `nodeId` | `boolean` | 节点当前是否可收起（有可达后代且无多父冲突） |
-| `getData()` | — | `{nodes, connections, regions, viewport}` | 当前画布的完整序列化状态（Weave 导出 JSON 同款格式；已收起节点带 `collapse` 字段） |
-| `setData(data)` | `data: {nodes, connections?, regions?, viewport?}` | 加载后的新状态（同 `getData` 格式） | 用一份 JSON 整体替换画布，自动校验、重建层次、重置撤销历史并渲染；缺 `regions` 的旧数据兼容为空 |
-| `exportPng()` | — | `Promise<{dataUrl, name}>` | 复用 Weave 自己的导出管线，返回当前画布渲染出的 PNG data URL（不触发下载） |
-| `count()` | — | `{nodes, connections, regions}` | 节点 / 连线 / 分区数量 |
+| `getData()` | — | 序列化文档（形态随模式） | 当前模式文档的完整序列化状态。节点图：`{mode:"graph", nodes, connections, regions, viewport}`，`x`/`y`/`w`/`h` 为网格单位，已收起节点带 `collapse` 字段。时序图：可读的 `weave-sequence` 格式（见 [4.11](#411-画布模式与时序图)） |
+| `setData(data)` | `data` | 加载后的新状态（同 `getData` 格式） | 用一份 JSON 整体替换当前文档，自动校验、重建层次、重置撤销历史并渲染；数据自带 `mode`（或 `format:"weave-sequence"`）时先切换到对应模式再落盘，因此可用于跨模式写文档 |
+| `exportPng()` | — | `Promise<{dataUrl, name}>` | 复用 Weave 自己的导出管线，返回当前画布渲染出的 PNG data URL（不触发下载）。v2.0 起导出的 PNG 内嵌文档存档，拖回画布即可还原整张图 |
+| `count()` | — | `{nodes, connections, regions}` | 当前文档的节点 / 连线 / 分区数量 |
 
 **示例**
 
@@ -149,6 +154,11 @@ weave.setData({
 | `getNodeRect` | `getNodeRect(node) -> rect` | 节点矩形 |
 | `getNodeClamp` | `getNodeClamp(...)` | 节点世界坐标夹取 |
 | `connArrows` | `connArrows(conn, fromNode, toNode) -> ...` | 连线箭头信息 |
+| `seqLifeLen` | `seqLifeLen(node) -> number` | 时序线有效长度（`node.life` 缺省时取 200，像素） |
+| `seqLifeAnchor` | `seqLifeAnchor(node) -> {x,y}` | 时序线锚点 = 节点底边中点 |
+| `seqLifeEnd` | `seqLifeEnd(node) -> {x,y}` | 时序线末端坐标 = 锚点向下延伸 life |
+| `seqMsgDefaultY` | `seqMsgDefaultY(node) -> number` | 消息缺省高度：源时序线中点按格取整 |
+| `seqMsgOffsetGroups` | `seqMsgOffsetGroups(items) -> ...` | 时序消息避让分组（同一高度水平投影重叠的消息错开） |
 
 **示例**
 
@@ -162,7 +172,7 @@ Weave.Util.clamp(150, 0, 100)            // 100
 
 ## 4. `App` 编辑器应用对象
 
-`App` 是编辑器的核心对象，所有状态与方法都挂在它上面。下面按功能分组介绍**常用**接口；完整成员见 [4.11](#411-app-全部成员索引)。
+`App` 是编辑器的核心对象，所有状态与方法都挂在它上面。下面按功能分组介绍**常用**接口；完整成员见 [4.12](#412-app-全部成员索引)，画布模式与时序图专有接口见 [4.11](#411-画布模式与时序图)。
 
 ### 4.1 节点增删改查
 
@@ -186,7 +196,7 @@ Weave.Util.clamp(150, 0, 100)            // 100
 // 用原生数据直接改
 App.canvasState.nodes.push({
   id: App._genId(), label: "手写节点", desc: "", color: "violet",
-  x: 0, y: 0, mirrored: false, w: 170, h: 80,
+  x: 0, y: 0, mirrored: false, w: 180, h: 80,
 })
 App.saveCanvasSnapshot(); App.renderCanvas()
 ```
@@ -195,7 +205,8 @@ App.saveCanvasSnapshot(); App.renderCanvas()
 
 | 函数 | 签名 | 说明 |
 |---|---|---|
-| `_createConnection(fromId, toId, opts)` | `_createConnection(from, to, {label?, cp1?, cp2?, mirrored?}) -> conn` | 构造连线对象（**不自动加入画布**）。`cp1/cp2` 为 `{dx,dy}` 控制点 |
+| `_createConnection(fromId, toId, opts)` | `_createConnection(from, to, {label?, cp1?, cp2?, mirrored?, y?, dashed?, color?}) -> conn` | 构造连线对象（**不自动加入画布**）。`cp1/cp2` 为 `{dx,dy}` 控制点；`y`（消息高度）/`dashed`/`color` 仅时序图消息使用。日常建线优先用 `weave.addConnection()`（节点图）/ `weave.addMessage()`（时序图） |
+| `_createSeqMessage(fromId, toId, y)` | — | 时序消息的创建入口（含落点夹取、避让与吸附动画）；`weave.addMessage` 直接落定吸附值不走动画 |
 | `_deleteConnection(connId)` | — | 删除一条连线 |
 | `_deleteConnections(connIds)` | — | 批量删除连线 |
 | `_getConnById(id)` | — | 按 id 查连线 |
@@ -213,7 +224,7 @@ App.saveCanvasSnapshot(); App.renderCanvas();
 
 ### 4.2.1 分区（region）
 
-分区是画布上的可见矩形框，用于把若干节点归入同一区域，可嵌套。一个节点同一时刻至多归属一个分区；`nodeIds` 为该分区的直属节点（拖入拖出自动维护），`parentId` 为父分区 id，`null` 表示顶级。分区在渲染上位于连线层之下，父分区先画、子分区叠于其上。
+分区是画布上的可见矩形框，用于把若干节点归入同一区域，可嵌套（**仅节点图**——时序图模式没有分区入口，`weave.addRegion` 在时序图下会抛错）。一个节点同一时刻至多归属一个分区；`nodeIds` 为该分区的直属节点（拖入拖出自动维护），`parentId` 为父分区 id，`null` 表示顶级。分区在渲染上位于连线层之下，父分区先画、子分区叠于其上。
 
 | 函数 | 签名 | 说明 |
 |---|---|---|
@@ -243,7 +254,7 @@ rg.id
 
 ### 4.2.2 收起 / 展开（collapse）
 
-收起把一个节点沿连线可达的后代链隐藏，画布只显示根节点。收起根节点的 `collapse` 字段记录 `{hidden: [{id, dx, dy}, ...]}`，`dx`/`dy` 是各隐藏节点相对根节点的偏移（收起瞬间保存；展开时按根最新坐标 + 偏移恢复相对位置）。
+收起把一个节点沿连线可达的后代链隐藏，画布只显示根节点（**仅节点图**——时序图的消息不是节点串的后继，收起不可用）。收起根节点的 `collapse` 字段记录 `{hidden: [{id, dx, dy}, ...]}`，`dx`/`dy` 是各隐藏节点相对根节点的偏移（收起瞬间保存；展开时按根最新坐标 + 偏移恢复相对位置）。
 
 规则：
 - 闭包沿连线方向（`from` → `to`）收集全部可达节点，含分支与汇合。
@@ -353,14 +364,14 @@ App._clearHighlight();
 
 | 函数 | 签名 | 说明 |
 |---|---|---|
-| `exportPNG()` | `async exportPNG() -> Promise<void>` | 触发 PNG 下载（含能力探测与回退） |
+| `exportPNG()` | `async exportPNG() -> Promise<void>` | 触发 PNG 下载（含能力探测与回退）。v2.0 起导出的 PNG 内嵌文档存档（拖回画布可还原整张图） |
 | `_exportPNGLegacy()` | — | 旧版数据重绘导出 |
 | `doExport()` | — | 导出 JSON 文件下载 |
 | `doImport()` | — | 打开文件选择器导入 JSON |
-| `_loadFromData(d)` | `_loadFromData({nodes, connections?, regions?, viewport?}) -> void` | 用一份 JSON 替换整个画布（自动校验/重建/渲染/快照；缺 `regions` 兼容为空） |
+| `_loadFromData(d)` | `_loadFromData(data) -> bool` | 用一份 JSON 替换整个画布（自动校验/重建/渲染/快照；数据带 `mode` 或 `format:"weave-sequence"` 时先切换到对应模式再落盘） |
 | `_readJsonFile(file)` | — | 读取 JSON 文件对象 |
-| `_triggerDownload(dataUrl, name)` | — | 触发下载 |
-| `_guardHasNodes()` | — | 是否有节点（导出前置检查） |
+| `_triggerDownload(href, name)` | — | 触发下载（`href` 可为 data URL 或 blob URL） |
+| `_guardHasNodes()` | — | 是否有可导出内容（导出前置检查） |
 
 **提示**：`weave.exportPng()` / `weave.setData()` 已封装上述能力且返回结果，优先使用。
 
@@ -401,7 +412,56 @@ App._clearHighlight();
 | `_getEl(id)` | — | 取某 id 的 DOM 元素（见 §5） |
 | `_updateStatusBadge()` | — | 刷新左下角「N 节点 · M 连线」徽标（分区不计入） |
 
-### 4.11 App 全部成员索引
+### 4.11 画布模式与时序图
+
+编辑器（v2.0+）有**两种画布模式**，各持一份完全独立的文档（节点/连线/分区、撤销历史、视口都分开），切换 = 换 `canvasState` 指针，因此渲染与编辑路径不分模式。存档分两个 localStorage 键：`flow_data`（节点图）与 `flow_data_seq`（时序图）；模式本身记在设置表（`flow_mode`），启动时回到上次使用的模式。
+
+| 成员 | 签名 | 说明 |
+|---|---|---|
+| `_mode` | 字段 | 当前模式：`'graph'` \| `'sequence'` |
+| `_isSeqMode()` | `_isSeqMode() -> bool` | 当前是否时序图模式 |
+| `_setMode(next)` | `_setMode('graph'\|'sequence') -> bool` | 状态级切换（已是目标模式返回 `false`）。切换是一次存档事务：先落盘当前文档，再换指针、清瞬态、重渲染。`weave.setMode` 封装了它 |
+| `_modeStore` | 字段 | 双文档槽：`{graph: {state, historyIndex, viewport}, sequence: {...}}` |
+| `_docKey(mode?)` | — | 当前（或指定）模式的存档键 |
+| `_ensureModeStore()` / `_loadStoredDoc(mode)` | — | 文档槽惰性装配 / 从存档装入指定模式的文档 |
+| `_snapSeqY(v)` | — | 消息高度网格吸附 |
+| `_repairSeqMessages(allowRemove, allowExtend)` | — | 整理时序图不变量：补足不够长的时序线；`allowRemove=true` 时删除越界悬空消息。手工改时序数据后调用 |
+| `_cancelSeqAnim()` | — | 收掉在途的时序吸附动画（切模式/导入前自动调用） |
+| `_connFollowSeq` | 设置字段 | 无 color 消息的取色规则：跟随源参与者或固定缺省线色 |
+
+时序图专有数据语义（内存像素）：
+
+- **参与者**即节点，时序线自节点**底边中点**（`seqLifeAnchor`）垂直向下，长度由 `node.life`（缺省 200、最小 40）决定，可带 `lifeColor`。
+- **消息**是连线加高度：`conn.y` 为画布绝对 Y（像素）；平行消息的避让偏移按"同一时间高度上水平投影重叠"分组。
+- 不变量：消息必须落在两端时序线范围内，落点超出现有长度时自动延长相应时序线（箭头两端永不悬空）。
+
+时序图的序列化形态（`weave.getData()` / `App._serializeData()` 在时序图下的返回）是**可读的 `weave-sequence` 格式**：
+
+```json
+{
+  "format": "weave-sequence",
+  "mode": "sequence",
+  "unit": "grid",
+  "gridPx": 20,
+  "time": { "originY": 6, "step": 1, "start": 1 },
+  "messageStyle": { "colorSource": "participant" },
+  "nodes": [
+    { "id": "n1", "label": "客户端", "color": "blue", "x": 0, "y": 2, "w": 9, "h": 4,
+      "lifeline": { "x": 4.5, "y": 6, "length": 10 } }
+  ],
+  "connections": [
+    { "id": "c1", "from": "n1", "to": "n2", "label": "查询订单", "t": 8, "line": "solid" }
+  ],
+  "viewport": { "panX": 0, "panY": 0, "scale": 1, "unit": "px" }
+}
+```
+
+- 坐标仍为网格单位；`lifeline{x, y, length}` 三个数定死一条时序线（列、起点=节点底边、长度）。
+- 消息高度写成时间步 `t`：以最顶部时序线起点为 `time.start`（1），向下每 `time.step` 格加 1；整份文件的时间与画布摆放高度无关（整体平移参与者不改变 `t`）。
+- `line` 是 `"solid"` / `"dashed"` 枚举且总是写出；空 desc / 空标签 / 空 regions / mirrored / cp1/cp2 不写。
+- 导入由 `_sequenceDocumentToData` 反向翻译回内存形状；`setData` / `_loadFromData` 见到 `format:"weave-sequence"` 或 `mode:"sequence"` 时自动切到时序图再落盘。
+
+### 4.12 App 全部成员索引
 
 > 以下为 `App` 上可直接调用的完整成员表（源自 `Object.getOwnPropertyNames(App)`）。`#` 表示点击后通常伴随 `saveCanvasSnapshot()` + `renderCanvas()`。
 
@@ -413,8 +473,8 @@ App._clearHighlight();
 | **存储** | `_lsGet`、`_lsSet`、`_lsGetJson` |
 | **查找** | `_getNodeMap`、`_getNodeById` |
 | **状态徽标** | `_updateStatusBadge` |
-| **撤销/保存** | `saveCanvasSnapshot`、`_serializeData`、`saveCanvas`、`canvasUndo`、`canvasRedo`、`_restoreCanvasSnapshot`、`updateCanvasUndoButtons` |
-| **导入/校验** | `_validateLoadedData`、`_restoreFromSerialized`、`_loadFromData` |
+| **撤销/保存** | `saveCanvasSnapshot`、`_serializeData`、`_serializeSequenceData`、`_serializeRegions`、`saveCanvas`、`canvasUndo`、`canvasRedo`、`_restoreCanvasSnapshot`、`updateCanvasUndoButtons` |
+| **导入/校验** | `_validateLoadedData`、`_prepareSerializedData`、`_sequenceDocumentToData`、`_commitSerialized`、`_restoreFromSerialized`、`_loadFromData` |
 | **颜色** | `_resolveColor`、`_loadCustomColors`、`_saveCustomColors`、`_cycleNodeColors`、`openCustomPicker`、`cancelCustomPicker`、`confirmCustomColor`、`_renderModalDots`、`_dotsHtml`、`_setActiveDot`、`_buildDotPanel`、`_buildModalDots`、`_renderColorWheel`、`_updateWheelDot`、`_updateCpUI`、`_cpFromRGB`、`_cpFromWheel`、`_applyGenColorUI`、`_setGenColor`、`_buildGDots`、`_gOpenCustomPicker` |
 | **视口/网格** | `_refreshContainerCache`、`getWorldPos`、`_viewportCenterWorld`、`_computeViewport`、`_zoomAbout`、`applyViewTransform`、`_drawGrid`、`updateCoordDisplay`、`_initCoordEditable`、`clampPan`、`centerCanvasOnNodes`、`centerCanvasOnOrigin` |
 | **渲染** | `_rebuildZOrder`、`_applyZOrder`、`_bringToFront`、`_destroyNodeEls`、`_forceRerender`、`updateNodePositions`、`_prepCanvas`、`_ensureCanvasSkeleton`、`_renderNodes`、`_syncResizeHandles`、`_applyNodeSize`、`_hideResizeHandles`、`_showResizeHandles`、`_updateNodeAppearance`、`_postRenderUpdate`、`_finalizeRender`、`_refreshOverflowFlags`、`_cancelSnapAnim`、`renderCanvas` |
@@ -426,6 +486,7 @@ App._clearHighlight();
 | **节点操作** | `clearAllNodes`、`_addNodeAt`、`_resetAddAnchor`、`addNode`、`copyNodes`、`pasteNodes`、`selectAllNodes`、`removeNode`、`removeNodes`、`_pruneCollapseOnRemove` |
 | **分区（region）** | `openRegionModal`、`saveRegionModal`、`closeRegionModal`、`removeRegion`、`ctxRegionFrameMove`、`ctxRegionResizeMode`、`toggleRegionMode`、`finalizeRegionCreate`、`startRegionMove`、`_setRegionMode`、`_regionAtPoint`、`_getRegionById`、`_regionChildIds`、`_regionDescendantIds`、`_regionAncestorIds`、`_regionDepth`、`_regionAllNodeIds`、`_regionContainsRegion`、`_syncNodeRegionMembership`、`_selectRegionOnly`、`_renderRegions`、`_updateRegionPreview`、`_applyRegionTransform`、`_startRegionResizeDrag`、`_enterRegionResize`、`_exitRegionResize`、`_enterRegionLabelEdit`、`_endRegionLabelEdit`、`_beginRegionLabelEdit`、`_cancelRegionSnapAnim`、`_animateRegionSnap`、`_clearRegionSelection`、`_markRegionDragFinished`、`_buildRegionModalDots` |
 | **收起 / 展开（collapse）** | `collapseChain`、`expandChain`、`toggleCollapse`、`_canToggleCollapse`、`_isCollapseHidden`、`_isConnectionCollapseHidden`、`_rebuildCollapseDerived`、`_collapseDerivedData`、`_flushRenderSync` |
+| **画布模式与时序图** | `_mode`、`_isSeqMode`、`_setMode`、`_modeStore`、`_docKey`、`_ensureModeStore`、`_loadStoredDoc`、`_applyModeChrome`、`_snapSeqY`、`_seqMsgY`、`_seqLifeAnchor`、`_tailClampY`、`_repairSeqMessages`、`_cancelSeqAnim`、`_animateSeqValue`、`_createSeqMessage`、`_connFollowSeq`、`_seqMoveState` |
 | **关联高亮** | `_highlightAtNode`、`_clearHighlight`、`_hlBlur`、`_hlLiftLayer`、`_hlLiftConnection`、`_hlLiftConns` |
 | **模态框** | `openNodeModal`、`closeModal`、`saveModal` |
 | **克隆/内联** | `_cloneNode`、`_enterNodeInlineEdit`、`_bindInlineInputs`、`closeInlineEdit`、`_getInlineInput`、`saveInlineEdit`、`inlineEdit` |
@@ -544,16 +605,32 @@ if (id) App.openNodeModal(id); // 用户可看到模态框并编辑
 })()
 ```
 
+**⑨ 切到时序图画一张两方交互图**
+
+```js
+(async () => {
+  weave.setMode("sequence");                       // 与节点图互不影响
+  const client = weave.addNode({ label: "客户端", color: "blue", x: 0, y: 40 });
+  const server = weave.addNode({ label: "服务器", color: "green", x: 600, y: 40 });
+  const m1 = weave.addMessage(client.id, server.id, 360, { label: "查询订单" });
+  const m2 = weave.addMessage(server.id, client.id, 480, { label: "返回结果" });
+  return { mode: weave.getMode(), msgs: [m1.id, m2.id], data: weave.getData() };
+})()
+```
+
+时序图下 `getData()` 返回 `weave-sequence` 可读格式（消息高度是时间步 `t`，时序线是 `lifeline{x,y,length}`）；`weave.setMode("graph")` 切回后，节点图的文档原样还在。
+
 ---
 
 ## 7. 注意事项与边界
 
 1. **执行环境**：代码在嵌入的 Weave iframe 内执行，只能访问该编辑器页面的全局（`App` / `Weave` / `weave` / `document` / `localStorage`）。不能访问 harness 外壳，不能 import/require 外部模块，也不具备 Node / shell 权限（那些是其他工具如 `write` / `pwsh` 的职责）。
 2. **入口是单个表达式**：需要多步时用 IIFE 包裹 —— `(() => { ...; return ... })()`，或 `(async () => {...})()` + `await`。
-3. **改完记得渲染**：直接改 `App.canvasState.nodes/connections/regions` 后，调用 `App.saveCanvasSnapshot()`（产生撤销历史并持久化）+ `App.renderCanvas()`（刷新画面）。若只想持久化不想要历史步骤，用 `App.saveCanvas()`。
-4. **数据格式**：`weave.getData()` / `setData()` / `_serializeData()` 使用同一个文档格式（节点带 `id/label/desc/color/x/y/mirrored/w/h` 及可选 `collapse`，连线带 `id/from/to/label/cp1/cp2/mirrored`，分区带 `id/label/color/x/y/w/h/nodeIds/parentId`，外加 `regions` 与 `viewport`）。该序列化格式里的 `x/y/w/h`（节点与分区）是网格单位（1 格 = 20px），加载时自动换算回像素；而 `weave.addNode` / `weave.addRegion` / `App._addNodeAt` / 直接读写 `App.canvasState.nodes` 时 `x/y` 都是像素。把 `getData()` 读到的坐标用于 `weave.addNode()` 前先乘 20；`weave.addNode()` 省略 `w`/`h` 即为默认 170×80px 节点。布局时相邻节点中心距取横向约 15 格、纵向约 10 格，全部坐标控制在 ±50 格以内。收起记录的 `dx`/`dy` 同为网格单位。
-5. **断开/切换视图无影响**：编辑器为离屏常驻实例，用户切到聊天页等任意页面时，`weave` 工具仍可操作同一份画布；改完切回 Weave 页即可看到。
-6. **清空**：`weave.setData({nodes:[],connections:[],regions:[]})` 会清空全部内容并把撤销历史重置为新基线。`App.clearAllNodes()` 会清空节点、连线与分区，另带原生 `confirm()` 确认弹窗，离屏执行时可能被自动取消而无效。
+3. **改完记得渲染**：直接改 `App.canvasState.nodes/connections/regions` 后，调用 `App.saveCanvasSnapshot()`（产生撤销历史并持久化）+ `App.renderCanvas()`（刷新画面）。若只想持久化不想要历史步骤，用 `App.saveCanvas()`。时序图下改完消息数据还要 `App._repairSeqMessages(false, true)` 保持"箭头不悬空"。
+4. **数据格式**：`weave.getData()` / `setData()` / `_serializeData()` 使用同一个文档格式（节点带 `id/label/desc/color/x/y/mirrored/w/h` 及可选 `collapse`、`life`，连线带 `id/from/to/label/cp1/cp2/mirrored` 及可选 `y`，分区带 `id/label/color/x/y/w/h/nodeIds/parentId`，外加 `regions` 与 `viewport`）。该序列化格式里的 `x/y/w/h`（节点与分区）是网格单位（1 格 = 20px），加载时自动换算回像素；而 `weave.addNode` / `weave.addRegion` / `App._addNodeAt` / 直接读写 `App.canvasState.nodes` 时 `x/y` 都是像素。把 `getData()` 读到的坐标用于 `weave.addNode()` 前先乘 20；`weave.addNode()` 省略 `w`/`h` 即为默认 180×80px 节点。布局时相邻节点中心距取横向约 15 格、纵向约 10 格，全部坐标控制在 ±50 格以内。收起记录的 `dx`/`dy` 同为网格单位。时序图文档的序列化形态不同（`weave-sequence` 可读格式，见 [4.11](#411-画布模式与时序图)）。
+5. **画布模式**：节点图与时序图是两份独立文档，模式能力不同——分区与收起仅节点图，消息仅时序图；`addNode`/`getData`/`setData`/`count`/`exportPng` 随当前模式工作。构造表达式前先用 `weave.getMode()` 确认模式；`setData` 写入带模式标记的数据时自动切换模式。节点 id 不跨文档通用。
+6. **断开/切换视图无影响**：编辑器为离屏常驻实例，用户切到聊天页等任意页面时，`weave` 工具仍可操作同一份画布；改完切回 Weave 页即可看到。
+7. **清空**：`weave.setData({nodes:[],connections:[]})` 只清空**当前模式**的文档并把撤销历史重置为新基线，另一份文档不受影响。`App.clearAllNodes()` 会清空当前文档的节点与连线，另带原生 `confirm()` 确认弹窗，离屏执行时可能被自动取消而无效。
 
 ---
 
