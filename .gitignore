@@ -1,1 +1,3 @@
 node_modules/
+.workbuddy/
+.weave-plugin-stage/

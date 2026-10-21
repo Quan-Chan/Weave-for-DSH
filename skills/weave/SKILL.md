@@ -1,35 +1,37 @@
 ---
 name: weave
-description: 当你需要通过 `weave` 工具操作嵌入的 Weave 画布编辑器时使用——编辑器有节点图与时序图两种画布模式：节点图下添加、编辑或删除节点与连线，绘制分区，收起与展开节点串；时序图下摆放参与者、调整时序线、在时序线之间收发消息。两种模式都可读取或整体替换画布、导出 PNG。任务中第一次调用 `weave` 工具前阅读本 skill，调用返回错误时复查一遍，以使用正确的接口。
+description: 当你需要通过 `weave` 工具操作嵌入的 Weave 画布编辑器时使用——编辑器有节点图与时序图两种画布模式：节点图下添加、编辑或删除节点与连线，绘制分区，收起与展开节点串；时序图下摆放参与者、调整时序线、在时序线之间收发消息。两种模式都可绘制分区框、读取或整体替换画布、导出 PNG。任务中第一次调用 `weave` 工具前阅读本 skill，调用返回错误时复查一遍，以使用正确的接口。
 ---
 
 # 使用 `weave` 工具操作 Weave 画布编辑器
 
-`weave` 工具把你提供的 `code` 表达式送进编辑器文档内执行，返回结果 JSON；表达式可异步（`await weave.exportPng()`）。作用域内有三个全局：`App`（编辑器对象，拥有全部状态和操作）、`Weave`（`Weave.Util` / `Weave.Color` / `Weave.Geom` 工具库）、`weave`（桥接对象）。编辑器常驻且离屏挂载，页面是否可见不影响使用。
+`weave` 工具把你提供的 `code` **表达式**送进编辑器文档内执行，返回结果 JSON；表达式可异步（`await weave.exportPng()`）。**必须是单个表达式**——多条语句要包成 IIFE：同步 `(() => { ...; return 结果 })()`，异步 `(async () => { ...; return 结果 })()`。返回值会被序列化成 JSON 传回（`undefined` 记为 `null`），所以要返回值就得显式 `return`。作用域内有三个全局：`App`（编辑器对象，拥有全部状态和操作）、`Weave`（`Weave.Util` / `Weave.Color` / `Weave.Geom` 工具库）、`weave`（桥接对象）。编辑器常驻且离屏挂载，页面是否可见不影响使用。
+
+> 网格换算系数恒为 **20**（`gridPx` 字段只是把这个常量写进数据里，不是可配置项）：1 格 = 20 像素。
 
 ## 画布模式与双文档（先读这一节）
 
 编辑器有**两种画布模式**，各自持有一份完全独立的文档：
 
 - **节点图（`graph`）**——节点 + 连线构成的有向图，支持分区与节点串收起。
-- **时序图（`sequence`）**——参与者（节点）垂下时序线，消息是时序线之间的水平箭头。
+- **时序图（`sequence`）**——参与者（节点）垂下时序线，消息是时序线之间的水平箭头。分区框同样可用（框住一组参与者）。
 
 | 方法 | 用途 |
 |---|---|
 | `weave.getMode()` | 返回当前模式 `"graph"` 或 `"sequence"` |
 | `weave.setMode(mode)` | 切换模式（`"graph"` / `"sequence"`）。两份文档互不影响：节点图的内容切过去还在，切回来也不丢 |
 
-**能力随模式变化**：`addNode` / `getData` / `setData` / `count` / `exportPng` 两种模式都可用；`addConnection` 仅节点图；`addMessage` 仅时序图；分区（`addRegion` / `removeRegion`）与收起展开（`collapseNode` 等）**仅节点图**——在时序图下调用会抛出明确错误，提示先 `setMode("graph")`。构造表达式前先确认当前模式符合需求，任务横跨两种模式时先 `setMode` 再操作。
+**能力随模式变化**：`addNode` / `getData` / `setData` / `count` / `exportPng` / 分区（`addRegion` / `removeRegion`）两种模式都可用；`addConnection` 仅节点图；`addMessage` 仅时序图；收起展开（`collapseNode` 等）**仅节点图**——在时序图下调用会抛出明确错误，提示先 `setMode("graph")`。构造表达式前先确认当前模式符合需求，任务横跨两种模式时先 `setMode` 再操作。
 
 ## 节点与连线（节点图）
 
 | 方法 | 用途 |
 |---|---|
-| `weave.addNode(spec)` | 添加一个节点。字段 `label`/`desc`/`color`/`x`/`y`/`w`/`h`，`x`/`y`/`w`/`h` 为像素值，省略 `w`/`h` 即默认 180×80。自动选中、保存、重渲染，返回节点。节点落进已有分区时自动加入该分区 `nodeIds`。预设颜色 id 为 `blue`/`cyan`/`green`/`yellow`/`orange` 或 `#rrggbb`；未知 id 回退为蓝色。时序图模式下同此方法，且节点自带时序线（见时序图一节） |
+| `weave.addNode(spec)` | 添加一个节点。字段 `label`/`desc`/`color`/`x`/`y`/`w`/`h`，`x`/`y`/`w`/`h` 为像素值，`x`/`y` 是节点的**左上角**（不是中心点），省略 `w`/`h` 即默认 180×80。自动选中、保存、重渲染，返回节点。节点落进已有分区时自动加入该分区 `nodeIds`。预设颜色 id 为 `blue`/`cyan`/`green`/`yellow`/`orange` 或 `#rrggbb`；未知 id 回退为蓝色。时序图模式下同此方法，且节点自带时序线（见时序图一节） |
 | `weave.addConnection(fromId, toId, opts?)` | 在两个节点之间建一条连线。`opts`: `label`/`cp1`/`cp2`（贝塞尔控制点）/`mirrored`。自动保存重渲染，返回连线。仅节点图可用 |
 | `weave.getData()` | 读取当前模式文档的序列化状态。节点图返回 `{mode:"graph", nodes, connections, regions, viewport}`（`x`/`y`/`w`/`h` 为**网格单位**）；已收起节点含 `collapse` 字段 |
-| `weave.setData(data)` | 用一份 JSON 整体替换当前文档，自动校验、重建、重置撤销历史、重渲染并返回新状态。数据自带 `mode`（或 `format:"weave-sequence"`）时会**先切换到对应模式**再落盘，因此可用于跨模式写文档 |
-| `weave.count()` | 返回 `{nodes, connections, regions}` 数量 |
+| `weave.setData(data)` | 用一份 JSON 整体替换当前文档，自动校验、重建、重置撤销历史、重渲染并返回新状态。数据自带 `mode`（或 `format:"weave-sequence"`）时会**先切换到对应模式**再落盘，因此可用于跨模式写文档；注意它可能把你刚确认过的模式改掉，之后需重新 `getMode()` |
+| `weave.count()` | 返回 `{nodes, connections, regions}` 数量（时序图下 `connections` 是消息数，`regions` 是分区数） |
 | `App.addNode()` | 在视口中心或上次锚点处加一个节点 |
 | `App._addNodeAt(x, y, asPosition?)` | 在世界坐标处加节点（`asPosition=true` 时坐标作为左上角） |
 | `App.removeNode(id)` / `App.removeNodes(ids)` | 删除一个 / 多个节点，自动删除相关连线，并从分区 `nodeIds` 剔除 |
@@ -54,15 +56,20 @@ description: 当你需要通过 `weave` 工具操作嵌入的 Weave 画布编辑
 | `Weave.Geom.seqMsgDefaultY(node)` | 消息缺省高度：源时序线中点按格取整 |
 | `App._repairSeqMessages(allowRemove, allowExtend)` | 整理不变量：补足不够长的时序线（`allowRemove=true` 时删除越界悬空消息）。手工改数据后调用 |
 
-时序图下 `weave.getData()` 返回可读的 `weave-sequence` 格式：`{format:"weave-sequence", mode:"sequence", unit:"grid", gridPx, time:{originY, step, start}, nodes:[{id, label, color, x, y, w, h, lifeline:{x, y, length}}], connections:[{id, from, to, label?, t, line, color?}]}`。坐标仍是网格单位；消息高度写成时间步 `t`（最顶部时序线起点为 1，向下每格加 1，与画布摆放高度无关）；`line` 是 `"solid"` / `"dashed"` 枚举。`setData` 接受同款格式并自动落回时序图模式。
+时序图下 `weave.getData()` 返回可读的 `weave-sequence` 格式：`{format:"weave-sequence", mode:"sequence", unit:"grid", gridPx, time:{originY, step, start}, messageStyle, nodes:[{id, label, color, x, y, w, h, lifeline:{x, y, length}}], connections:[{id, from, to, label?, t, line, color?}]}`。
 
-## 分区（仅节点图）
+- **所有坐标与尺寸都是网格单位**（`unit:"grid"`；`gridPx` 恒为 20，非可配置项）：节点的 `x`/`y`/`w`/`h` 与 `lifeline.x`/`lifeline.y`/`lifeline.length` 全是格；`lifeline.length` 就是 `life` 的格数（像素 `life` = `length × 20`）。
+- **消息高度写成时间步 `t`**：`t = time.start + (消息像素高度 − time.originY × 20) / (20 × time.step)`。`time.originY` 是最顶部时序线起点（所有参与者底边中点里最小者）的绝对 Y，单位为格（公式里先乘 20 换成像素）；`time.start` 缺省 1，`time.step` 缺省 1（1 个时间步 = 1 格）。反向换算（从 `t` 还原像素高度）同理：`消息像素高度 = time.originY × 20 + (t − time.start) × 20 × time.step`。因此把全部参与者整体上移，`t` 不变——时间与摆放高度无关。
+- `line` 是 `"solid"` / `"dashed"` 枚举；`messageStyle` 说明无色消息的取色规则（`colorSource:"participant"` 跟随源参与者，或 `"fixed"` 固定缺省线色）。
+- `setData` 接受同款格式并自动落回时序图模式。
 
-分区（region）是画布上的可见矩形框，用于把若干节点归入同一区域，可嵌套。一个节点同一时刻至多归属一个分区（`nodeIds` 显式归属，拖入拖出自动维护）；`parentId` 记录父分区，`null` 为顶级。时序图模式没有分区。
+## 分区（两种模式都可用）
+
+分区（region）是画布上的可见矩形框，用于把若干节点归入同一区域，可嵌套。一个节点同一时刻至多归属一个分区（`nodeIds` 显式归属，拖入拖出自动维护）；`parentId` 记录父分区，`null` 为顶级。编辑器 v2.0.2 起画框分区在**节点图与时序图两种模式都可用**（时序图下用来框住一组参与者），`weave.addRegion()` / `weave.removeRegion()` 在任一模式下都能直接调用。
 
 | 方法 | 用途 |
 |---|---|
-| `weave.addRegion(spec)` | 添加一个分区。字段 `x`/`y`/`w`/`h`（像素，左上角与尺寸）、`label`、`color`。整框包含的未归属节点自动加入 `nodeIds`（节点整体落在框内才算）；中心命中的最深现存分区设为 `parentId`。返回新分区（内存对象，像素坐标） |
+| `weave.addRegion(spec)` | 添加一个分区。字段 `x`/`y`/`w`/`h`（像素，左上角与尺寸）、`label`、`color`。整框包含的未归属节点自动加入 `nodeIds`（节点整体落在框内才算）；被新框圈住的现存分区改挂为新框的子分区；中心命中的最深现存分区设为 `parentId`。返回新分区（内存对象，像素坐标） |
 | `weave.removeRegion(id)` | 删除一个分区框；框内节点与连线保留，直接子分区上提到被删分区的父级。返回剩余 `regions` |
 | `App.openRegionModal(id)` | 打开分区属性窗口（名称 / 颜色） |
 | `App.saveRegionModal()` / `closeRegionModal()` | 保存 / 关闭分区属性窗口 |
@@ -72,7 +79,7 @@ description: 当你需要通过 `weave` 工具操作嵌入的 Weave 画布编辑
 | `App._regionAllNodeIds(regionId)` | 分区及全部后代分区的节点 id 并集 |
 | `App._syncNodeRegionMembership(nodeId)` | 按节点中心点命中的最深分区同步归属 |
 
-用 `weave.setData()` 写入含 `regions` 的数据时，分区坐标与节点同规则（网格单位）。
+用 `weave.setData()` 写入含 `regions` 的数据时，分区坐标与节点同规则（网格单位）；`weave.addRegion()` 的返回值是**像素**坐标，要写回 `setData()` 需先除以 20。
 
 ## 收起与展开（仅节点图）
 
@@ -167,7 +174,7 @@ description: 当你需要通过 `weave` 工具操作嵌入的 Weave 画布编辑
 - 布局：相邻节点横向相距约 15 格（300px）、纵向约 10 格（200px）；坐标保持在 ±50 格（±1000px）以内。`weave.addNode()` 省略 `w`/`h` 即为默认 180×80 节点。
 - 每次完成画布写入后执行一次检查：`weave.count()` 核对节点/连线/分区数量；`weave.getData()` 核对连线两端 id 存在、方向符合内容顺序、节点文本长度与节点尺寸匹配。检查不通过时修正后重写，直到通过。
 - 收起沿连线方向（`from` → `to`）取后代；分支链、汇合点都按可达集处理。目标节点被多个父节点连接时不能收起其父链上的节点，先确认 `weave.canCollapse()`。
-- 分区内节点的判断：`addRegion` 收编整框包含的节点；节点之后拖入分区由编辑器同步归属。手工构造分区数据时，`nodeIds` 必须指向现存节点且不重复，`parentId` 必须指向现存分区或为 `null`。
+- 分区内节点的判断有两套标准：**建框时**按「整框包含」（节点整体落在框内）收编进 `nodeIds`；**节点之后移动/新建时**由 `App._syncNodeRegionMembership` 按「中心点命中的最深分区」同步归属。手工构造分区数据时，`nodeIds` 必须指向现存节点且不重复，`parentId` 必须指向现存分区或为 `null`。
 - `App.selectedNodeIds` / `App.selectedConnIds` 是 `Set`；`App.selectedRegionId` 是单个 id 或 `null`。
 - `weave` 只在内嵌编辑器文档内执行，不能操作 harness 外壳、文件系统或宿主进程。
 
@@ -223,12 +230,12 @@ description: 当你需要通过 `weave` 工具操作嵌入的 Weave 画布编辑
 ## 调用失败时
 
 - 报错信息是页面抛出的消息或超时；把表达式改为合法 JavaScript 后重试。
-- 提示「仅时序图模式可添加消息」或「时序图模式不支持分区 / 收起」：模式用错了，先 `weave.getMode()` 确认、`weave.setMode()` 切换，再重发原操作。
-- `weave.addMessage` / `addConnection` / `addRegion` 提示「节点不存在」：传入的 id 在当前文档里不存在——切过模式后 id 不会跨文档有效，重新 `getData()` 取 id。
+- 提示「仅时序图模式可添加消息」或「时序图模式不支持收起」：模式用错了，先 `weave.getMode()` 确认、`weave.setMode()` 切换，再重发原操作。
+- `weave.addMessage` / `addConnection` 提示「节点不存在」：传入的 id 在当前文档里不存在——切过模式后 id 不会跨文档有效，重新 `getData()` 取 id。（`addRegion` 不接受节点 id，不会报这个错。）
 - `weave.exportPng()` 需要画布上至少一个节点，画布为空会报错。
 - 得到「编辑器尚未就绪」时，延迟后重试。
 - `collapseNode` 返回 `false`：节点没有可达后代，或存在多父冲突（目标节点被 ≥2 个节点连接）。
 
 ## 参考
 
-`App`、`Weave.Util`、`Weave.Color`、`Weave.Geom` 的完整成员列表见 `docs/weave-api.md`。
+`App`、`Weave.Util`、`Weave.Color`、`Weave.Geom` 的完整成员列表见本仓库的 `docs/weave-api.md`（相对仓库根目录，插件包内已随附）。

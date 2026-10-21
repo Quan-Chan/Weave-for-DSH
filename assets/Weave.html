@@ -938,7 +938,7 @@ body.touch #ctx{min-width:150px}
           <div class="about-content">
             <div class="about-icon" id="aboutSigma" role="button" tabindex="0" data-i18n-title="about.sigmaTip" title="千万不要点"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M 16.69 5.44 L 7.31 5.44 L 12 12 L 7.31 18.56 L 16.69 18.56"/></svg></div>
             <div class="about-row"><label data-i18n="about.appName">软件名称</label><span>Weave</span></div>
-            <div class="about-row"><label data-i18n="about.version">版本号</label><span>v2.0.1</span></div>
+            <div class="about-row"><label data-i18n="about.version">版本号</label><span>v2.0.3</span></div>
             <div class="about-row"><label data-i18n="about.projectUrl">项目地址</label><a href="https://github.com/Quan-Chan/Weave" target="_blank">https://github.com/Quan-Chan/Weave</a></div>
             <div class="about-row"><label data-i18n="about.devHome">开发者主页</label><a href="https://github.com/Quan-Chan" target="_blank">https://github.com/Quan-Chan</a></div>
           </div>
@@ -1924,6 +1924,7 @@ Weave.Geom = {
   },
   //时序消息的避让分组（纯函数）：同一"时间高度"上、水平投影互相重叠的消息
   //属于同一组，组内按出现次序交替上下错开（复用 connOffYFromIdx）。
+  //只共一个端点的链式相邻（A→B→C 同高）不算重叠，各自成组、保持平直。
   //入参 [{ id, y, x1, x2 }]，x1/x2 为两端时序线的世界 x；返回 id → 组内序号。
   //用区间重叠的连通分量而非"节点对"作分组键，才能覆盖：
   //  · A→B 与 B→A（同跨度、反向）
@@ -1948,7 +1949,9 @@ Weave.Geom = {
       };
       for (const it of list) {
         const lo = Math.min(it.x1, it.x2), hi = Math.max(it.x1, it.x2);
-        if (!comp || lo > compEnd) { flush(); comp = []; compEnd = -Infinity; }
+        //lo === compEnd 是"只共一个端点"的链式消息（A→B→C 同高）：投影无
+        //重叠，不构成避让组——否则链上第二条会被错误弯折。
+        if (!comp || lo >= compEnd) { flush(); comp = []; compEnd = -Infinity; }
         comp.push(it);
         if (hi > compEnd) compEnd = hi;
       }
@@ -2825,9 +2828,9 @@ Object.assign(App, {
     return changed;
   },
   //切换分区创建模式（Region 键）。开启时画布加 region-mode 类供 CSS 提示。
-  //画框分区是节点图专有：时序图模式下拒绝开启（Region 键与 Alt+拖拽同此一门）。
+  //与高度对齐工具互斥：两者都要占用"画布空白处拖拽"，同时开启会互相抢事件。
   _setRegionMode(on) {
-    if (on && this._isSeqMode()) return;
+    if (on && this._alignModeActive) this._setAlignMode(false);
     this._regionModeActive = on;
     const stage = this._getEl('canvasStage');
     if (stage) stage.classList.toggle('region-mode', on);
@@ -2844,6 +2847,8 @@ Object.assign(App, {
      隐藏，键位路径同此一门）。*/
   _setAlignMode(on) {
     if (on && !this._isSeqMode()) return;
+    //与画框分区互斥：两者都要占用"画布空白处拖拽"，同时开启会互相抢事件。
+    if (on && this._regionModeActive) this._setRegionMode(false);
     this._alignModeActive = on;
     const stage = this._getEl('canvasStage');
     if (stage) stage.classList.toggle('align-mode', on);
@@ -3130,9 +3135,6 @@ Object.assign(App, {
     const seq = this._isSeqMode();
     const stage = this._getEl('canvasStage');
     if (stage) stage.classList.toggle('seq-mode', seq);
-    //画框分区是节点图专有：时序模式下不提供入口。
-    const regionBtn = this._getEl('btnRegion');
-    if (regionBtn) regionBtn.classList.toggle('mode-hidden', seq);
     //高度对齐是时序图专有：节点图模式下不提供入口。
     const alignBtn = this._getEl('btnAlignNodes');
     if (alignBtn) alignBtn.classList.toggle('mode-hidden', !seq);
@@ -6206,8 +6208,8 @@ Object.assign(App, {
       return;
     }
     //分区创建：Region 模式 / Alt+左键。命中到已有分区时不进入创建（转移动）。
-    //时序图模式无分区，此路整体不成立（Alt+空白退化为平移）。
-    if (e.button === 0 && !this._isSeqMode() && (this._regionModeActive || e.altKey)) {
+    //未开分区模式时 Alt+空白退化为平移；节点图与时序图同规则。
+    if (e.button === 0 && (this._regionModeActive || e.altKey)) {
       //画分区（含 Alt+空白按下）是画布操作：取消关联高亮。
       this._clearHighlight();
       e.preventDefault();
@@ -7434,7 +7436,7 @@ Object.assign(App, {
       self._swallowNextCanvasClick();
       if (moved) {
         const w = self.getWorldPos(e2.clientX, e2.clientY);
-        const target = self._findSeqLifeHit(w.x, sd.fromId);
+        const target = self._findSeqLifeHit(w.x, w.y, sd.fromId);
         if (target && self._createSeqMessage(sd.fromId, target.nodeId, sd.y)) return;
       }
       self.renderLines();
@@ -7444,20 +7446,30 @@ Object.assign(App, {
   },
 
   //时序线落点判定（纯几何，不依赖 DOM，沿用 _findSocketHit 的形状）：
-  //只看水平距离——消息是水平的，按下时高度已经定好，落点只需回答
-  //"光标在哪条时序线上"。返回 { nodeId, x, dist } 或 null。
-  _findSeqLifeHit(wx, excludeNodeId) {
+  //先按水平距离筛出候选，再按"落点 y 是否在该时序线跨度内（锚点→末端）"
+  //优先裁决——垂直排列的参与者共用同一纵轴，只看水平距离会命中错的那条；
+  //同 x 且跨度都覆盖落点时，取锚点更近的一条。跨度都不含落点时退回
+  //水平距离最近的候选（保持旧行为兜底）。返回 { nodeId, x, dist } 或 null。
+  _findSeqLifeHit(wx, wy, excludeNodeId) {
     const r = SOCKET_HIT_RADIUS * (this._touchMode ? TOUCH_SOCKET_RADIUS_SCALE : 1);
-    let best = null;
+    let best = null;      //跨度覆盖落点的候选中最优者
+    let fallback = null;  //跨度都不覆盖时的兜底（水平距离最近）
     for (const n of this.canvasState.nodes) {
       if (n.id === excludeNodeId) continue;
       const end = Weave.Geom.seqLifeEnd(n);
       const dx = wx - end.x;
       if (Math.abs(dx) > r) continue;
-      const dist = Math.abs(dx);
-      if (!best || dist < best.dist) best = { nodeId: n.id, x: end.x, dist: dist };
+      const anchorY = end.y - Weave.Geom.seqLifeLen(n);
+      const inSpan = wy >= anchorY && wy <= end.y;
+      const cand = { nodeId: n.id, x: end.x, dist: Math.abs(dx), anchorY: anchorY };
+      if (inSpan) {
+        if (!best || cand.dist < best.dist ||
+            (cand.dist === best.dist && Math.abs(wy - cand.anchorY) < Math.abs(wy - best.anchorY))) best = cand;
+      } else if (!best && (!fallback || cand.dist < fallback.dist)) {
+        fallback = cand;
+      }
     }
-    return best;
+    return best || fallback;
   },
 
   //纯几何命中测试（不依赖 DOM），在任何缩放/平移下都正确

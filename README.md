@@ -10,7 +10,7 @@
 
 <h2>DeepSeek Harness 插件版</h2>
 
-本仓库在原版 Weave 之上做了插件化封装，编辑器本体原样打包（当前捆绑 [Weave v2.0.1](https://github.com/Quan-Chan/Weave/releases/tag/v2.0.1)）、未做任何修改：
+本仓库在原版 Weave 之上做了插件化封装，编辑器本体原样打包（当前捆绑 [Weave v2.0.3](https://github.com/Quan-Chan/Weave/releases/tag/v2.0.3)）、未做任何修改：
 
 - **页面内嵌** — 编辑器作为会话的第三个页面视图（chat / trajectory / **Weave**）嵌入 DeepSeek Harness，用户可直接拖拽节点、连线、编辑
 - **离屏常驻** — 编辑器 iframe 始终存活，AI 在任意页面视图下操作的都是同一份画布
@@ -31,7 +31,7 @@ dsh plugin --profile web add github:Quan-Chan/Weave-for-DSH
 ```sh
 dsh plugin --profile web add github:Quan-Chan/Weave-for-DSH   # git 仓库
 dsh plugin --profile web add weave-for-dsh                     # npm registry（发布后）
-dsh plugin --profile web add ./weave-for-dsh-0.2.0.tgz         # npm pack 产物
+dsh plugin --profile web add ./weave-for-dsh-0.3.0.tgz         # npm pack 产物
 dsh plugin --profile web add ./weave-for-dsh                    # 本地 checkout
 ```
 
@@ -42,9 +42,9 @@ dsh plugin --profile web add ./weave-for-dsh                    # 本地 checkou
 <h2>功能</h2>
 
 - **节点** — 添加、删除、选中（单击 / 框选 / 多选）、拖拽移动、内联编辑、复制粘贴、收起 / 展开节点串（隐藏沿连线可达的后代，保存相对位置，展开时恢复）
-- **时序图** — 与节点图并列的第二种画布模式（v2.0+）：参与者垂下时序线，消息是两条时序线之间的水平箭头；两份文档各自独立保存
+- **时序图** — 与节点图并列的第二种画布模式（v2.0+）：参与者垂下时序线，消息是两条时序线之间的水平箭头；两份文档各自独立保存；v2.0.3 修正了同高链式消息弯折与垂直排列参与者消息落点
 - **关联高亮** — 按住 Alt 单击节点，高亮该节点及其直接关联的节点与连线，其余内容模糊（Alt 点击其他节点可切换高亮对象）
-- **分区** — 顶栏「分区」按钮或 Shift+R / Alt+拖拽绘制可嵌套分区框，整框收编节点，名称 / 颜色可编辑，移动分区随动其节点
+- **分区** — 顶栏「分区」按钮或 Shift+R / Alt+拖拽绘制可嵌套分区框，整框收编节点，名称 / 颜色可编辑，移动分区随动其节点；v2.0.2 起节点图与时序图两种模式都可用分区
 - **连线** — socket 拖拽创建、删除、标签编辑、贝塞尔曲线自定义调整
 - **画布** — 平移（拖拽 / 中键）、滚轮缩放、适应视图、坐标 HUD 编辑
 - **颜色** — 5 种预设色 + 自定义色轮选择器，Ctrl+滚轮快速切换
@@ -68,7 +68,7 @@ weave.setMode("sequence")                                          // 切换画�
 weave.addNode({ label: "需求分析", color: "blue", x: 0, y: 0 })   // 加节点
 weave.addConnection(a.id, b.id, { label: "依赖" })                 // 节点图：建连线
 weave.addMessage(c.id, d.id, 360, { label: "查询" })               // 时序图：建消息
-weave.addRegion({ x: -80, y: -120, w: 600, h: 280, label: "模块" }) // 画分区（仅节点图）
+weave.addRegion({ x: -80, y: -120, w: 600, h: 280, label: "模块" }) // 画分区（两种模式都可用）
 weave.collapseNode(id)                                            // 收起节点后代（仅节点图）
 weave.getData()                                                    // 读当前文档（格式随模式）
 weave.setData({ nodes: [...], connections: [...], regions: [...] }) // 整体替换（带模式标记自动切换）
